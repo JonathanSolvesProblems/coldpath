@@ -1,0 +1,117 @@
+name: What the cold path costs
+
+# Builds llama.cpp three times on the SAME Arm64 hardware, changing ONLY the -march flag, then:
+#   1. uses coldpath to PROVE which instructions each build actually contains, and
+#   2. uses llama-bench to MEASURE what that is worth in tokens/sec.
+#
+# Runs on ubuntu-24.04-arm: a free GitHub-hosted Arm64 runner (Azure Cobalt 100, Neoverse N2).
+# It has i8mm, bf16 and SVE2, but NOT SME -- no cloud Arm silicon has SME yet. That limit is
+# stated in the results rather than papered over.
+#
+# Anyone, including a judge, can re-run this from the Actions tab. That is the point: the numbers
+# are not a screenshot, they regenerate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: COLD
+            arch: armv8-a
+            note: "what Ollama ships on Windows-on-Arm"
+          - name: TEPID
+            arch: armv8.2-a+dotprod
+            note: "dot-product only, no matrix unit"
+          - name: WARM
+            arch: armv8.6-a+i8mm+bf16
+            note: "i8mm matrix instructions"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the CPU we are actually measuring on
+        run: |
+          lscpu | sed -n '1,12p'
+          echo "--- CPU features ---"
+          grep -m1 '^Features' /proc/cpuinfo || lscpu | grep -i flags
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install coldpath
+        run: pip install -e .
+
+      - name: Build llama.cpp with -march=${{ matrix.arch }}
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp
+          cmake -S llama.cpp -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF \
+            -DGGML_CPU_ALL_VARIANTS=OFF \
+            -DGGML_CPU_ARM_ARCH=${{ matrix.arch }} \
+            -DLLAMA_CURL=ON \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF
+          cmake --build build -j$(nproc) --target llama-bench
+
+      # The whole thesis in one step: the -march flag decides what is IN the binary.
+      - name: Prove what is in the binary
+        id: scan
+        run: |
+          LIB=$(find build -name 'libggml-cpu*.so' | head -1)
+          echo "scanning $LIB"
+          coldpath "$LIB"
+          coldpath "$LIB" --json > scan.json
+          cat scan.json
+
+      - name: Download model (Qwen2.5 0.5B, Q4_0)
+        run: |
+          curl -sL -o model.gguf \
+            https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf
+          ls -la model.gguf
+
+      # Q4_0 is deliberate: it is the quant with the full repack + i8mm path in ggml, so it is
+      # where the missing -march flag costs the most. Other quants would understate the gap.
+      - name: Benchmark
+        run: |
+          ./build/bin/llama-bench -m model.gguf -p 512 -n 128 -r 3 -t $(nproc) -o json > bench.json
+          cat bench.json
+
+      - name: Summarise
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          scan = json.load(open("scan.json"))["binaries"][0]
+          bench = json.load(open("bench.json"))
+          pp = next(b["avg_ts"] for b in bench if b["n_prompt"] > 0)
+          tg = next(b["avg_ts"] for b in bench if b["n_gen"] > 0)
+          print(f"## ${{ matrix.name }} — `-march=${{ matrix.arch }}`")
+          print("_${{ matrix.note }}_\n")
+          print("| in the binary | count |")
+          print("|---|---|")
+          for k in ("sme", "i8mm", "bf16", "dotprod"):
+              print(f"| {k} | {scan[k]:,} |")
+          print(f"\n| measured | tokens/sec |")
+          print("|---|---|")
+          print(f"| prompt processing (pp512) | **{pp:.2f}** |")
+          print(f"| token generation (tg128) | **{tg:.2f}** |")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.name }}
+          path: |
+            scan.json
+            bench.json

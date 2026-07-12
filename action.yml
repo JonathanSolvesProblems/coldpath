@@ -1,0 +1,60 @@
+name: coldpath
+description: Fail the build if your Arm binaries cannot execute the chip's matrix instructions.
+author: Jonathan
+branding:
+  icon: cpu
+  color: blue
+
+inputs:
+  path:
+    description: Binary, directory, or archive (.whl, .apk, .tar.gz) to scan.
+    required: true
+  require:
+    description: Fail if any scanned binary lacks this feature (sme, i8mm, bf16, dotprod).
+    required: false
+    default: i8mm
+  fail-on-cold:
+    description: If false, report but never fail the job.
+    required: false
+    default: 'true'
+
+outputs:
+  verdict:
+    description: HOT (SME) / WARM (i8mm) / TEPID (dotprod) / COLD (nothing)
+    value: ${{ steps.scan.outputs.verdict }}
+  report:
+    description: JSON report.
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: pip install --quiet "coldpath @ git+https://github.com/${{ github.action_repository || 'jonathan/coldpath' }}"
+
+    - id: scan
+      shell: bash
+      run: |
+        set -o pipefail
+        coldpath "${{ inputs.path }}" | tee report.txt
+        coldpath "${{ inputs.path }}" --json > report.json
+
+        {
+          echo 'report<<EOF'
+          cat report.json
+          echo EOF
+        } >> "$GITHUB_OUTPUT"
+
+        VERDICT=$(python -c "import json;print(json.load(open('report.json'))['binaries'][0]['verdict'])")
+        echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "## coldpath: \`$VERDICT\`"
+          echo '```'
+          cat report.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "${{ inputs.fail-on-cold }}" = "true" ]; then
+          coldpath "${{ inputs.path }}" --require "${{ inputs.require }}" --quiet
+        fi

@@ -1,0 +1,58 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Runs on x86 AND Arm64 on purpose. coldpath analyses Arm binaries; it does not need to
+        # run on Arm. Most people's CI is x86, so that path has to work.
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  # The claim in the README must survive contact with the real binaries, on every push.
+  verify-findings:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e ".[dev]"
+
+      - name: llama.cpp official linux-arm64 -- the ISA ladder must reproduce
+        run: |
+          V=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | python -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
+          curl -sL -o l.tgz "https://github.com/ggml-org/llama.cpp/releases/download/$V/llama-$V-bin-ubuntu-arm64.tar.gz"
+          mkdir -p lcpp && tar xzf l.tgz -C lcpp
+          python scripts/verify_ladder.py lcpp
+
+      - name: Ollama official windows-arm64 -- must still be a cold path
+        run: |
+          V=$(curl -s https://api.github.com/repos/ollama/ollama/releases/latest | python -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
+          curl -sL -o o.zip "https://github.com/ollama/ollama/releases/download/$V/ollama-windows-arm64.zip"
+          mkdir -p oll && unzip -q o.zip -d oll
+          coldpath oll/lib/ollama/ggml-cpu.dll
+          # If Ollama ever fixes this, THIS STEP FAILS -- and that is the good outcome.
+          # A green build here means the bug is still shipping.
+          if coldpath --require dotprod --quiet oll/lib/ollama/ggml-cpu.dll; then
+            echo "::notice::Ollama's Windows-on-Arm build now has matrix kernels. The finding is fixed."
+            exit 1
+          else
+            echo "::warning::Ollama windows-arm64 still ships zero matrix instructions."
+          fi

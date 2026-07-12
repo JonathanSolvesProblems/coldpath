@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# scan corpus -- large, and always re-downloadable from the projects' own release channels
+corpus/
+*.gguf
+*.whl
+*.zip
+*.tgz
+*.tar.gz
+*.tar.zst
+scan.json
+bench.json
+report.txt
+report.json

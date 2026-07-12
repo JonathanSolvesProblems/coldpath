@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coldpath"
+version = "0.1.0"
+description = "Prove whether an Arm binary can actually use the chip's matrix hardware."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{ name = "Jonathan" }]
+keywords = ["arm", "aarch64", "sme", "sme2", "i8mm", "kleidiai", "llama.cpp", "optimization"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Hardware",
+]
+dependencies = [
+    "capstone>=5.0",
+    "pyelftools>=0.29",
+    "pefile>=2023.2.7",
+]
+
+[project.optional-dependencies]
+zstd = ["zstandard>=0.21"]
+dev = ["pytest>=7", "zstandard>=0.21"]
+
+[project.scripts]
+coldpath = "coldpath.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jonathan/coldpath"
+Issues = "https://github.com/jonathan/coldpath/issues"
+
+[tool.setuptools.packages.find]
+include = ["coldpath*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
