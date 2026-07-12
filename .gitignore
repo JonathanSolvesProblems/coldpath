@@ -19,3 +19,10 @@ scan.json
 bench.json
 report.txt
 report.json
+
+# internal hackathon strategy - never publish
+STRATEGY.md
+OFFICE_HOURS.md
+DEMO_SCRIPT.md
+FINDINGS.md
+_private/
