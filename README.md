@@ -1,9 +1,11 @@
 # coldpath
 
-**Popular LLM runtimes ship on Arm with the chip's matrix hardware switched off. On Azure Cobalt 100
-(Neoverse N2, a cloud Arm CPU) that is 5.75x on prompt processing and ~2.2x on generation, about $0.45
-versus $0.08 per million prompt tokens. I built the tool that finds it in any binary, fixed the most
-popular offender in one line upstream, and gated it so a cold build can't reach your Arm cloud fleet.**
+**The most popular local LLM runner ships its Arm build with the chip's matrix hardware switched off, and
+any portable Arm build that misses one compile flag does the same. On Azure Cobalt 100 (Neoverse N2, a
+cloud Arm CPU) the fix is 5.75x on prompt processing and ~2.2x on generation, which at a typical Arm-cloud
+rate is roughly $0.45 versus $0.08 per million prompt tokens. I built the tool that finds it in any
+binary, fixed the most popular offender in one line upstream, and gated it so a cold build can't reach
+your Arm cloud fleet.**
 
 `coldpath` disassembles any AArch64 binary and proves whether it *contains, and can dispatch,* the chip's
 matrix and dot-product instructions (SME/SME2, i8mm, bf16, dotprod). Absence is dispositive: zero `smmla`
@@ -45,10 +47,12 @@ runner. Every row is built `GGML_NATIVE=OFF` with a pinned `-march` to isolate t
 | **TEPID** `armv8.2-a+dotprod`, the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~$0.08 | **~5.75x** |
 | **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~660 | ~$0.065 | **~6.9x** |
 
-_The tok/s and the 5.75x ratio are measured on the 4-vCPU runner; the $/1M-tokens applies a sample
-Graviton4 on-demand rate, so only the dollar column assumes a price. The workflow's `compare` job
-recomputes all of it live each run (figures vary a few percent). The fix I filed (PR #17654) is the TEPID
-row, dot-product, safe on every shipped Arm device; i8mm adds the rest where the silicon has it._
+_The tok/s and the 5.75x ratio are measured on the 4-vCPU Neoverse N2 runner; the $/1M-tokens applies a
+sample Arm-cloud on-demand rate (~$0.04/vCPU-hr, Graviton4-class), so only the dollar column assumes a
+price. The workflow's `compare` job recomputes all of it live each run (figures vary a few percent). The
+fix I filed (PR #17654) is the TEPID row, dot-product, which is safe on every shipped Arm device; the
+6.9x WARM row needs i8mm, which server and newer mobile cores have but Windows-on-Arm's Cortex-A76-class
+chips do not, so the PR intentionally ships dot-product only._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
@@ -60,18 +64,21 @@ judge) from the Actions tab on free Arm64 hardware. coldpath is the instrument t
 
 ## Why a static scan is sufficient (and why it works on Arm but not x86)
 
-ggml, XNNPACK and most Arm kernel libraries select their fast paths at **compile time**, not run time.
-After llama.cpp [PR #10457](https://github.com/ggml-org/llama.cpp/pull/10457) (which removed runtime
-ISA detection to fix a ~15x regression, [#10435](https://github.com/ggml-org/llama.cpp/issues/10435)),
-the i8mm/dotprod intrinsics are `#if`-guarded on `__ARM_FEATURE_MATMUL_INT8` / `__ARM_FEATURE_DOTPROD`.
-So if the build used the wrong `-march`, the fast path is not merely skipped, it is **compiled out**,
+ggml, XNNPACK and most Arm kernel libraries bake their fast paths into each binary at **compile time**.
+(ggml can ship several single-ISA binaries and pick one at load via `GGML_CPU_ALL_VARIANTS`, but each
+binary is itself compile-time fixed, and coldpath scans each one, which is exactly what the missing
+Windows-on-Arm flag turned off.) After llama.cpp
+[PR #10457](https://github.com/ggml-org/llama.cpp/pull/10457) (which removed runtime ISA detection to fix
+a ~15x regression, [#10435](https://github.com/ggml-org/llama.cpp/issues/10435)), the i8mm/dotprod
+intrinsics are `#if`-guarded on `__ARM_FEATURE_MATMUL_INT8` / `__ARM_FEATURE_DOTPROD`.
+So if the build used the wrong `-march`, the fast path is not merely skipped; it is **compiled out**,
 physically absent from the binary. Disassembling `.text` and looking is therefore decisive.
 
 Two properties make this sound:
 
 1. **AArch64 is fixed-width: 4-byte instructions on a 4-byte grid.** A data word embedded in `.text` (a
    literal pool, a jump table) is local to its own 4 bytes and can never cascade into the surrounding
-   code. coldpath decodes with a resyncing sweep, so one data word is skipped, not fatal. An x86 linear
+   code. coldpath decodes with a resyncing sweep, so one data word is skipped, never fatal. An x86 linear
    sweep would desynchronize and corrupt everything downstream; on Arm it cannot. The approach is sound
    here precisely because of a property x86 lacks.
 2. **Detection reads register operands, not capstone instruction groups.** Capstone decodes SVE and SME
@@ -140,8 +147,9 @@ Three findings fall out:
 in [`examples/ollama-fix/`](examples/ollama-fix/); ~5.75x prefill from the dot-product fix I filed, up to
 ~6.9x with i8mm, measured on Cobalt 100. Its Linux build is fine (the row above), so this is
 Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed COLD on **all 8 stable
-releases** from v0.31.2 through the current v0.32.7, and [`test.yml`](.github/workflows/test.yml)
-re-downloads the *latest* release and re-checks it on every push, so this claim can't silently rot.
+releases** (v0.32.2 was withdrawn) from v0.31.2 through the current v0.32.7, and
+[`test.yml`](.github/workflows/test.yml) re-downloads the *latest* release and re-checks it on every push,
+so this claim can't silently rot.
 
 **2. No ggml / llama.cpp CPU backend ships SME, including the backends named for it** (ONNX Runtime and
 ExecuTorch, in the table above, *do* ship SME by default; this is specific to the ggml stack). llama.cpp's
@@ -173,8 +181,11 @@ $ python scripts/verify_ladder.py llama-b10344/
 variant          dotprod      sve    i8mm    sme   verdict
 armv8.0_1              0        0       0      0   ok
 armv8.2_1          1,184        0       0      0   ok
+armv8.2_2          1,184        0       0      0   ok
 armv8.2_3          1,235   10,735       0      0   ok
 armv8.6_1          1,253   12,102     402      0   ok
+armv8.6_2          1,253   11,987     402      0   ok
+armv9.2_1          1,253   12,087     402      0   ok
 armv9.2_2          1,253   12,087     402      0   ok
 coldpath reproduces llama.cpp's own 8-variant ISA ladder exactly.
 ```

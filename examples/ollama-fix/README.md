@@ -65,9 +65,10 @@ what coldpath reports.
 based Surface SQ1/SQ2 and Snapdragon X / Oryon all have FEAT_DotProd), so there is no SIGILL risk on any
 shipped hardware. It restores the dot-product kernels that carry most of the win.
 
-For a Snapdragon-X-targeted build, `armv8.7-a` additionally enables i8mm (`smmla`), matching what
-llama.cpp's own Windows-on-Arm release ships, at the cost of dropping pre-Snapdragon-X SQ-series
-compatibility. That is the aggressive option; the patch here takes the conservative, zero-regression one.
+For a Snapdragon-X-targeted build, `armv8.6-a+i8mm` (the WARM row below) additionally enables i8mm
+(`smmla`), matching the i8mm path llama.cpp's own Windows-on-Arm release ships, at the cost of dropping
+pre-Snapdragon-X SQ-series compatibility (Cortex-A76 predates i8mm). That is the aggressive option; the
+patch here takes the conservative, zero-regression one.
 
 ## The measured recovery
 
@@ -82,12 +83,13 @@ Actions tab. coldpath scans each build to prove what landed in it; `llama-bench`
 | **WARM** `armv8.6-a+i8mm` (Snapdragon X option) | i8mm 268, dotprod 1,044 | ~660 tok/s | **~6.9x** |
 
 _Representative figures from the CI benchmark on the shared Neoverse N2 runner; they vary a few percent
-per run and reproduce at ~6-7x._
+per run and reproduce at ~5.75x from the filed dot-product patch, up to ~6.9x with i8mm._
 
 Token generation (decode) is memory-bandwidth-bound and rides on dot-product, not the matrix unit:
 54.54 -> 122.20 tok/s (2.24x) from the dotprod fix, and essentially flat from i8mm on top (that is
 expected: `smmla` is an outer product that pays off in the compute-bound prefill GEMM, not in batch-1
-decode). Prompt processing is where the cold path costs the most, and it costs ~6-7x.
+decode). Prompt processing is where the cold path costs the most: ~5.75x with the filed dot-product fix,
+up to ~6.9x with i8mm.
 
 This likely also explains [ollama#8246](https://github.com/ollama/ollama/issues/8246): 5-10 seconds per
 token on one Arm chip, fine on another, closed with no root cause. That is the fingerprint of a build
@@ -95,5 +97,6 @@ that fell back to scalar because the fast-path instructions were compiled out.
 
 ## Status
 
-The patch is proposed upstream to Ollama. The measurement above is reproducible in CI on free Arm64
-hardware; the root cause is confirmed against Ollama's and ggml's current source.
+The patch is proposed upstream to Ollama as [PR #17654](https://github.com/ollama/ollama/pull/17654)
+(open, not yet merged). The measurement above is reproducible in CI on free Arm64 hardware; the root
+cause is confirmed against Ollama's and ggml's current source.
