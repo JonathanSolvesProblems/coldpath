@@ -1,7 +1,7 @@
 # coldpath
 
 **Popular LLM runtimes ship on Arm with the chip's matrix hardware switched off. On Azure Cobalt 100
-(Neoverse N2, a cloud Arm CPU) that is 5.75x on prompt processing and ~2.2x on generation — about $0.45
+(Neoverse N2, a cloud Arm CPU) that is 5.75x on prompt processing and ~2.2x on generation, about $0.45
 versus $0.08 per million prompt tokens. I built the tool that finds it in any binary, fixed the most
 popular offender in one line upstream, and gated it so a cold build can't reach your Arm cloud fleet.**
 
@@ -30,25 +30,25 @@ instructions, every matmul in scalar/NEON. It is not a platform limit. llama.cpp
 build, **same OS, same ggml source**, ships the kernels (`i8mm 244, dotprod 1,052`). Ollama doesn't fork
 ggml: it builds pinned upstream llama.cpp with one flag missing. This is a **distribution** hazard, not a
 build default: a native `cmake` build detects the host and comes out warm, but any *portable* build
-(cross-compiled, reproducible, or explicitly `GGML_NATIVE=OFF` for device compatibility — which is how
+(cross-compiled, reproducible, or explicitly `GGML_NATIVE=OFF` for device compatibility, which is how
 prebuilt binaries are made) must pick a target `-march` or fall back to baseline `armv8-a`. That is the
 choice a distributor makes, and the one Ollama got wrong for Windows-on-Arm. (Distributors who use
 `GGML_CPU_ALL_VARIANTS=ON` runtime dispatch avoid it, which is why Ollama's Linux arm64 build is warm.)
 
-What it costs, measured on **Azure Cobalt 100 (Neoverse N2)** — a cloud Arm CPU, on the free GitHub
+What it costs, measured on **Azure Cobalt 100 (Neoverse N2)**, a cloud Arm CPU, on the free GitHub
 runner. Every row is built `GGML_NATIVE=OFF` with a pinned `-march` to isolate the ISA effect; only
 `-march` changes:
 
 | build (`GGML_NATIVE=OFF`, pinned `-march`) | coldpath sees | pp512 tok/s | $ / 1M tokens | vs COLD |
 |---|---|---:|---:|---:|
-| **COLD** `armv8-a` — the baseline a portable build falls back to (Ollama's Windows build) | i8mm 0, dotprod 0 | ~95 | ~$0.45 | 1.0x |
-| **TEPID** `armv8.2-a+dotprod` — the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~$0.08 | **~5.75x** |
+| **COLD** `armv8-a`, the baseline a portable build falls back to (Ollama's Windows build) | i8mm 0, dotprod 0 | ~95 | ~$0.45 | 1.0x |
+| **TEPID** `armv8.2-a+dotprod`, the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~$0.08 | **~5.75x** |
 | **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~660 | ~$0.065 | **~6.9x** |
 
 _The tok/s and the 5.75x ratio are measured on the 4-vCPU runner; the $/1M-tokens applies a sample
 Graviton4 on-demand rate, so only the dollar column assumes a price. The workflow's `compare` job
 recomputes all of it live each run (figures vary a few percent). The fix I filed (PR #17654) is the TEPID
-row — dot-product, safe on every shipped Arm device; i8mm adds the rest where the silicon has it._
+row, dot-product, safe on every shipped Arm device; i8mm adds the rest where the silicon has it._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
@@ -64,7 +64,7 @@ ggml, XNNPACK and most Arm kernel libraries select their fast paths at **compile
 After llama.cpp [PR #10457](https://github.com/ggml-org/llama.cpp/pull/10457) (which removed runtime
 ISA detection to fix a ~15x regression, [#10435](https://github.com/ggml-org/llama.cpp/issues/10435)),
 the i8mm/dotprod intrinsics are `#if`-guarded on `__ARM_FEATURE_MATMUL_INT8` / `__ARM_FEATURE_DOTPROD`.
-So if the build used the wrong `-march`, the fast path is not merely skipped, it is **compiled out** —
+So if the build used the wrong `-march`, the fast path is not merely skipped, it is **compiled out**,
 physically absent from the binary. Disassembling `.text` and looking is therefore decisive.
 
 Two properties make this sound:
@@ -75,7 +75,7 @@ Two properties make this sound:
    sweep would desynchronize and corrupt everything downstream; on Arm it cannot. The approach is sound
    here precisely because of a property x86 lacks.
 2. **Detection reads register operands, not capstone instruction groups.** Capstone decodes SVE and SME
-   correctly but leaves `insn.groups` empty for both, so group-based detection silently reports zero —
+   correctly but leaves `insn.groups` empty for both, so group-based detection silently reports zero,
    the exact false-negative class this tool exists to catch.
 
 coldpath reports what is **present and reachable** in the binary. For ggml that equals what will
@@ -101,7 +101,7 @@ coldpath libfoo.so --json                  # machine-readable
 
 Reads AArch64 **ELF, PE and Mach-O** (including universal binaries) and looks inside `.whl`, `.apk`,
 `.zip`, `.tar.gz` and `.tar.zst`. Verdicts: **HOT** (SME), **WARM** (i8mm matrix), **TEPID** (dotprod
-only), **COLD** (nothing), **UNKNOWN** (too little of `.text` decodable to judge — coldpath refuses to
+only), **COLD** (nothing), **UNKNOWN** (too little of `.text` decodable to judge, coldpath refuses to
 assert absence it cannot back up).
 
 ### As a CI gate
@@ -131,7 +131,7 @@ fixes its build, that job fails on purpose.
 | ExecuTorch 1.3.1, aarch64 wheel | **HOT** | 771 | 960 | 3,185 | 100% | `9208f5cf` |
 | llama.cpp b10344, linux-arm64 (best variant, *named* `armv9.2`) | WARM | 0 | 402 | 1,253 | 100% | `807564f5` |
 | llama.cpp b10344, win-arm64 | WARM | 0 | 244 | 1,052 | 100% | `b9a0dd0e` |
-| Ollama v0.31.2, linux-arm64 (best variant) | WARM | 0 | 384 | 1,110 | 100% | — |
+| Ollama v0.31.2, linux-arm64 (best variant) | WARM | 0 | 384 | 1,110 | 100% | n/a |
 | **Ollama v0.31.2, win-arm64** | **COLD** | **0** | **0** | **0** | 100% | `536ada0d` |
 
 Three findings fall out:
@@ -143,7 +143,7 @@ Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed 
 releases** from v0.31.2 through the current v0.32.7, and [`test.yml`](.github/workflows/test.yml)
 re-downloads the *latest* release and re-checks it on every push, so this claim can't silently rot.
 
-**2. No ggml / llama.cpp CPU backend ships SME — including the backends named for it** (ONNX Runtime and
+**2. No ggml / llama.cpp CPU backend ships SME, including the backends named for it** (ONNX Runtime and
 ExecuTorch, in the table above, *do* ship SME by default; this is specific to the ggml stack). llama.cpp's
 `libggml-cpu-armv9.2_1.so` / `_armv9.2_2.so` are named for the **Armv9.2-A architecture level** (where
 SME is an *optional* extension), and contain zero ZA-tile instructions, zero `smstart`, zero
@@ -165,7 +165,7 @@ instructions (208 of them MOPA outer-products); they originate in KleidiAI, whic
 
 The tool is validated against ground truth it did not author, and against a positive control.
 
-**Ground truth — llama.cpp's own ISA ladder.** The official linux-arm64 release ships eight `ggml-cpu`
+**Ground truth, llama.cpp's own ISA ladder.** The official linux-arm64 release ships eight `ggml-cpu`
 backends with the ISA level in the filename. A correct detector must reproduce that staircase exactly:
 
 ```
@@ -179,7 +179,7 @@ armv9.2_2          1,253   12,087     402      0   ok
 coldpath reproduces llama.cpp's own 8-variant ISA ladder exactly.
 ```
 
-**Positive control — SME really is findable.** The ORT wheel above proves a zero means a real absence,
+**Positive control, SME really is findable.** The ORT wheel above proves a zero means a real absence,
 not a broken detector. `pytest` (24 tests) covers each instruction family against hand-assembled
 encodings, the resync-through-data property, the coverage gate, and the single-word corroboration floor,
 so correctness is provable without any binary on disk.
@@ -195,23 +195,23 @@ decode) that one build flag recovers on Arm cloud silicon.
   not how often it runs. Absence is proof (the kernel cannot execute); presence is necessary, not
   sufficient.
 - **It sees the ISA path, not external matrix units.** On macOS, ggml/llama.cpp can route matmul through
-  Apple's Accelerate BLAS, which uses the **AMX** matrix unit — hardware acceleration that is *not*
+  Apple's Accelerate BLAS, which uses the **AMX** matrix unit, hardware acceleration that is *not*
   ISA-visible to a disassembler. So coldpath's headline is scoped to **Linux/Neoverse, Windows-on-Arm,
   and Android**, where the public ISA path is the only path. The specific findings here are safe from
   this: ggml has no runtime kernel generation, and Ollama ships no BLAS backend on Windows-on-Arm, so
   there is no external unit to miss.
-- **Three states, reported honestly.** A kernel can be (i) absent — compiled out; (ii) present but
+- **Three states, reported honestly.** A kernel can be (i) absent, compiled out; (ii) present but
   runtime-gated behind a CPU-feature check; (iii) present and on the default path. coldpath distinguishes
   *absent* (its whole point) from *present*. It does not claim a present kernel is dispatched at runtime;
   for ggml that question is moot (dispatch is compile-time), for a runtime-dispatching library it is out
   of scope by design.
-- **No SME hardware was benchmarked.** No shipping cloud Arm CPU has SME — not Graviton3/4/5, not Cobalt
+- **No SME hardware was benchmarked.** No shipping cloud Arm CPU has SME, not Graviton3/4/5, not Cobalt
   100/200, not Axion, including the 2026 Neoverse-V3 parts. The SME findings are proven *statically* (the
   instructions are absent); their runtime cost is not measured here, and I do not quote Arm's "up to 6x"
   as if it were mine.
 - **Coverage is published next to every finding** so the absence claims are auditable. Below 0.90 the
   verdict is UNKNOWN, never a false COLD.
-- **coldpath checks whether a binary is *fast* on Arm, not whether it *builds* on Arm** — a different,
+- **coldpath checks whether a binary is *fast* on Arm, not whether it *builds* on Arm**, a different,
   already well-served question.
 
 ## Prior art

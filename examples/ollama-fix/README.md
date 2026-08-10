@@ -50,7 +50,7 @@ endif()
 
 With both unset and `GGML_NATIVE=OFF`, **no `-march` is appended at all**, so the compiler defaults to
 plain `armv8-a`. ggml's fast paths are `#if`-guarded on `__ARM_FEATURE_DOTPROD` / `__ARM_FEATURE_MATMUL_INT8`,
-so under `armv8-a` they are compiled out. The instructions are not slow, they are **absent** — exactly
+so under `armv8-a` they are compiled out. The instructions are not slow, they are **absent**, exactly
 what coldpath reports.
 
 ## The fix
