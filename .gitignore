@@ -26,3 +26,6 @@ OFFICE_HOURS.md
 DEMO_SCRIPT.md
 FINDINGS.md
 _private/
+
+# local submission materials (b-roll, submission text) - never commit
+broll/
