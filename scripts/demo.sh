@@ -10,7 +10,7 @@ cd "$WORK"
 PY="$(command -v python3 || command -v python)"
 
 echo "==> installing coldpath"
-"$PY" -m pip install --quiet "coldpath @ git+https://github.com/JonathanSolvesProblems/coldpath"
+"$PY" -m pip install --quiet coldpath
 
 echo
 echo "==> Ollama's official Windows-on-Arm build"

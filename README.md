@@ -78,8 +78,7 @@ given shape. See [Scope](#scope-and-honest-limitations).
 ## Install
 
 ```bash
-pip install git+https://github.com/JonathanSolvesProblems/coldpath
-# or, from a clone:  pip install -e .
+pip install coldpath
 ```
 
 ## Use
