@@ -1,11 +1,20 @@
 # coldpath
 
+[![PyPI](https://img.shields.io/pypi/v/coldpath)](https://pypi.org/project/coldpath/)
+[![Python](https://img.shields.io/pypi/pyversions/coldpath)](https://pypi.org/project/coldpath/)
+[![tests](https://github.com/JonathanSolvesProblems/coldpath/actions/workflows/test.yml/badge.svg)](https://github.com/JonathanSolvesProblems/coldpath/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+*A linter and CI gate for whether your Arm AI binary actually uses the chip's matrix hardware.*
+
 **The most popular local LLM runner ships its Arm build with the chip's matrix hardware switched off, and
 any portable Arm build that misses one compile flag does the same. On Azure Cobalt 100 (Neoverse N2, a
 cloud Arm CPU) the fix is 5.75x on prompt processing and ~2.2x on generation, which at a typical Arm-cloud
 rate is roughly $0.45 versus $0.08 per million prompt tokens. I built the tool that finds it in any
 binary, fixed the most popular offender in one line upstream, and gated it so a cold build can't reach
 your Arm cloud fleet.**
+
+> **$0.45 → $0.08 per 1M prompt tokens, from one build flag, measured live on Azure Cobalt 100 (Neoverse N2).**
 
 `coldpath` disassembles any AArch64 binary and proves whether it *contains, and can dispatch,* the chip's
 matrix and dot-product instructions (SME/SME2, i8mm, bf16, dotprod). Absence is dispositive: zero `smmla`
@@ -204,7 +213,11 @@ decode) that one build flag recovers on Arm cloud silicon.
 
 - **Static presence, not dynamic frequency.** coldpath proves an instruction is present and reachable,
   not how often it runs. Absence is proof (the kernel cannot execute); presence is necessary, not
-  sufficient.
+  sufficient. For the headline finding the benchmark closes that gap directly: the WARM build runs ~6.9x
+  faster than the byte-identical-source COLD build, and a binary that *contained* `smmla` but never
+  dispatched to it would be no faster than COLD, so the speedup is live evidence the matrix path executes.
+  For a runtime-dispatching library (ONNX Runtime's MLAS, ACL) coldpath proves the kernel shipped, not
+  that it is selected for a given shape.
 - **It sees the ISA path, not external matrix units.** On macOS, ggml/llama.cpp can route matmul through
   Apple's Accelerate BLAS, which uses the **AMX** matrix unit, hardware acceleration that is *not*
   ISA-visible to a disassembler. So coldpath's headline is scoped to **Linux/Neoverse, Windows-on-Arm,
@@ -225,12 +238,33 @@ decode) that one build flag recovers on Arm cloud silicon.
 - **coldpath checks whether a binary is *fast* on Arm, not whether it *builds* on Arm**, a different,
   already well-served question.
 
-## Prior art
+## How it compares
 
-Arm Streamline and Performix profile at runtime on real Arm silicon (not a shipped binary on an x86
-laptop). `arm/mcp` and similar arm-readiness tools check whether code *builds* on Arm64. `objdump` can
-show you the bytes. None package this as a turnkey, hardware-free, CI-gateable answer to "does my Arm AI
-binary actually use the matrix hardware."
+| | needs Arm hardware? | needs a running workload / profiler? | works on any x86 laptop? | one-command CI-gate verdict? | catches capstone's SME false-negative? |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **coldpath** | **no** | **no** | **yes** | **yes** | **yes** |
+| Arm Streamline / Performix | yes | yes (live profiling) | no | no | n/a |
+| `arm/mcp` arm-readiness checks | no | no | yes | partial | no (checks it *builds*, not that it's *fast*) |
+| `objdump` / `llvm-objdump` | no | no | yes | no (raw bytes, DIY) | no |
+| runtime profilers (`perf`) | yes | yes | no | no | n/a |
+
+Streamline and Performix profile a running workload on real Arm silicon. arm-readiness tools check whether
+code *builds* on Arm64. `objdump` shows raw bytes. None give a turnkey, hardware-free, CI-gateable answer
+to "does my Arm AI binary actually use the matrix hardware."
+
+## Who this is for
+
+- **Platform / MLOps teams running LLM inference on Arm64 cloud** (Graviton, Cobalt, Axion), the
+  fast-growing default for cost-efficient inference. A cold build silently costs ~5.75x on prompt
+  throughput and the matching share of the bill.
+- **Runtime and image distributors** shipping portable AArch64 binaries (pip wheels, Docker images,
+  prebuilt releases), where cross-compiling for device compatibility is exactly what strands the matrix path.
+- **Anyone evaluating Arm instances**, to confirm the runtime they picked actually uses the silicon they
+  are paying for.
+
+Three reusable artifacts come out of it: the upstream fix
+([PR #17654](https://github.com/ollama/ollama/pull/17654)), the [CI-gate Action](#as-a-ci-gate) others can
+drop into their own pipeline, and the [scan scoreboard](RESULTS.md) of official Arm AI binaries.
 
 ## Licence
 
