@@ -129,7 +129,7 @@ fixes its build, that job fails on purpose.
 Three findings fall out:
 
 **1. Ollama's Windows-on-Arm build has no matrix or dot-product instructions.** Cause and one-line fix
-in [`examples/ollama-fix/`](examples/ollama-fix/); ~6.97x prefill, measured. Its Linux build is fine
+in [`examples/ollama-fix/`](examples/ollama-fix/); ~6-7x prefill, measured. Its Linux build is fine
 (the row above), so this is Windows-specific and build-flag-specific, not Ollama being incapable.
 
 **2. Nothing in the ggml ecosystem ships SME — including the backends named for it.** llama.cpp's
@@ -172,7 +172,7 @@ not a broken detector. `pytest` (24 tests) covers each instruction family agains
 encodings, the resync-through-data property, the coverage gate, and the single-word corroboration floor,
 so correctness is provable without any binary on disk.
 
-This validation is the receipt, not the headline. The headline is the ~6.97x an Ollama user is silently
+This validation is the receipt, not the headline. The headline is the ~6-7x an Ollama user is silently
 losing.
 
 ---
