@@ -175,7 +175,6 @@ jobs:
               print(f"| {name} | {scan.get('i8mm',0):,} | {scan.get('dotprod',0):,} | "
                     f"{pp:.1f} | {pp*3600:,.0f} | ${cost:.3f} | {ratio:.2f}x |")
           if cold and "TEPID" in rows:
-              print(f"\n**The one-flag fix: {rows['TEPID'][1]/cold:.2f}x more tokens per core-hour, "
-                    f"the same off the cloud bill.**")
+              print(f"\n**The one-flag fix: {rows['TEPID'][1]/cold:.2f}x cheaper per token.**")
           print(f"\n_*at ${PRICE_PER_VCPU_HR}/vCPU-hr x {VCPUS} vCPU. Only the $ column assumes a price._")
           PY

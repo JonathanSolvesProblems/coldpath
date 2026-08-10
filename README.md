@@ -1,8 +1,8 @@
 # coldpath
 
 **Popular LLM runtimes ship on Arm with the chip's matrix hardware switched off. On Azure Cobalt 100
-(Neoverse N2, a cloud Arm CPU) that costs 5.75x on prompt-processing throughput: 5.75x fewer tokens per
-core-hour, the same 5.75x on the cloud bill. I built the tool that finds it in any binary, fixed the most
+(Neoverse N2, a cloud Arm CPU) that is 5.75x on prompt-processing throughput and on the cost per token —
+about $0.45 versus $0.08 per million. I built the tool that finds it in any binary, fixed the most
 popular offender in one line upstream, and gated it so a cold build can't reach your Arm cloud fleet.**
 
 `coldpath` disassembles any AArch64 binary and proves whether it *contains, and can dispatch,* the chip's
@@ -35,16 +35,16 @@ so a mis-built cloud container is one flag away from this.
 What it costs, measured on **Azure Cobalt 100 (Neoverse N2)** — a cloud Arm CPU, on the free GitHub
 runner, only `-march` changing:
 
-| build (same model + hardware, only `-march` changes) | coldpath sees | pp512 tok/s | tokens / core-hour | vs COLD |
+| build (same model + hardware, only `-march` changes) | coldpath sees | pp512 tok/s | $ / 1M tokens | vs COLD |
 |---|---|---:|---:|---:|
-| **COLD** `armv8-a` — Ollama's Windows build, and the naive Arm64 default | i8mm 0, dotprod 0 | ~95 | ~0.34M | 1.0x |
-| **TEPID** `armv8.2-a+dotprod` — the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~1.96M | **~5.75x** |
-| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~640 | ~2.30M | **~6.7x** |
+| **COLD** `armv8-a` — Ollama's Windows build, and the naive Arm64 default | i8mm 0, dotprod 0 | ~95 | ~$0.45 | 1.0x |
+| **TEPID** `armv8.2-a+dotprod` — the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~$0.08 | **~5.75x** |
+| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~660 | ~$0.065 | **~6.9x** |
 
-_5.75x more tokens per core-hour is 5.75x lower cost per token on any Arm cloud — the workflow's
-`compare` job computes it live as roughly **$0.45 → $0.08 per 1M tokens** (Graviton4 on-demand rate).
-Figures vary a few percent per run. The fix I filed (PR #17654) is the TEPID row — dot-product, safe on
-every shipped Arm device; i8mm adds the rest where the silicon has it._
+_The tok/s and the 5.75x ratio are measured on the 4-vCPU runner; the $/1M-tokens applies a sample
+Graviton4 on-demand rate, so only the dollar column assumes a price. The workflow's `compare` job
+recomputes all of it live each run (figures vary a few percent). The fix I filed (PR #17654) is the TEPID
+row — dot-product, safe on every shipped Arm device; i8mm adds the rest where the silicon has it._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
@@ -180,8 +180,8 @@ not a broken detector. `pytest` (24 tests) covers each instruction family agains
 encodings, the resync-through-data property, the coverage gate, and the single-word corroboration floor,
 so correctness is provable without any binary on disk.
 
-This validation is the receipt, not the headline. The headline is the 5.75x more tokens per core-hour
-that one build flag recovers on Arm cloud silicon.
+This validation is the receipt, not the headline. The headline is the 5.75x lower cost per token that one
+build flag recovers on Arm cloud silicon.
 
 ---
 
