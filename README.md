@@ -1,11 +1,14 @@
 # coldpath
 
-**The most popular way to run an LLM on an Arm laptop ships with its matrix hardware switched off. I
-found it with a tool that had to be built, fixed it for ~6x, and made the fix impossible to regress.**
+**Popular LLM runtimes ship on Arm with the chip's matrix hardware switched off. On Azure Cobalt 100
+(Neoverse N2, a cloud Arm CPU) that costs 5.75x on prompt-processing throughput: 5.75x fewer tokens per
+core-hour, the same 5.75x on the cloud bill. I built the tool that finds it in any binary, fixed the most
+popular offender in one line upstream, and gated it so a cold build can't reach your Arm cloud fleet.**
 
-`coldpath` disassembles any AArch64 binary and proves whether it can actually execute the chip's
-matrix and dot-product instructions (SME/SME2, i8mm, bf16, dotprod). It needs no Arm hardware and no
-profiler; it runs on the x86 laptop you already have, and it runs as a CI gate.
+`coldpath` disassembles any AArch64 binary and proves whether it *contains, and can dispatch,* the chip's
+matrix and dot-product instructions (SME/SME2, i8mm, bf16, dotprod). Absence is dispositive: zero `smmla`
+means the binary cannot run an i8mm matmul on any core. It needs no Arm hardware and no profiler; it runs
+on the x86 laptop you already have, and as a CI gate that stops a cold build reaching production.
 
 ---
 
@@ -22,25 +25,26 @@ lib/ollama/ggml-cpu.dll
     --   dotprod (sdot)        0
 ```
 
-Ollama's official Windows-on-Arm build (v0.31.2) executes **zero** matrix and **zero** dot-product
-instructions. Every Snapdragon X laptop running it does LLM matrix multiplication in scalar/NEON only.
+That is Ollama's official Windows-on-Arm build (v0.31.2): **zero** matrix, **zero** dot-product
+instructions, every matmul in scalar/NEON. It is not a platform limit. llama.cpp's own Windows-on-Arm
+build, **same OS, same ggml source**, ships the kernels (`i8mm 244, dotprod 1,052`). Ollama doesn't fork
+ggml: it builds pinned upstream llama.cpp with one flag missing. And it is not a Windows quirk either:
+the *default* Arm64 build path (`GGML_NATIVE=OFF`, no `-march`) produces the same cold binary anywhere,
+so a mis-built cloud container is one flag away from this.
 
-It is not a limitation of the platform. llama.cpp's own Windows-on-Arm build, **same OS, same ggml
-source**, ships working kernels (`i8mm 244, dotprod 1,052`). Ollama does not fork ggml's kernels: it
-fetches upstream llama.cpp pinned by `LLAMA_CPP_VERSION` and builds it, with only blob-compatibility
-patches. The difference is a single missing build flag, and it costs, measured on an Arm Neoverse N2
-server, **~6-7x on prompt processing**:
+What it costs, measured on **Azure Cobalt 100 (Neoverse N2)** — a cloud Arm CPU, on the free GitHub
+runner, only `-march` changing:
 
-| build (same model, same N2 hardware, only `-march` changes) | coldpath sees | pp512 tok/s | vs COLD |
-|---|---|---:|---:|
-| **COLD** `armv8-a` — what Ollama ships on Windows-on-Arm | i8mm 0, dotprod 0 | ~95 | 1.0x |
-| **TEPID** `armv8.2-a+dotprod` — the safe one-line fix I filed | dotprod 1,044 | ~545 | **~5.75x** |
-| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~640 | **~6.7x** |
+| build (same model + hardware, only `-march` changes) | coldpath sees | pp512 tok/s | tokens / core-hour | vs COLD |
+|---|---|---:|---:|---:|
+| **COLD** `armv8-a` — Ollama's Windows build, and the naive Arm64 default | i8mm 0, dotprod 0 | ~95 | ~0.34M | 1.0x |
+| **TEPID** `armv8.2-a+dotprod` — the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~1.96M | **~5.75x** |
+| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~640 | ~2.30M | **~6.7x** |
 
-_Representative figures from the [benchmark workflow](.github/workflows/benchmark.yml) on the shared
-Neoverse N2 runner; they vary a few percent per run and reproduce at ~6-7x. The fix I filed upstream is
-the TEPID row (dot-product, ~5.75x, safe on every Windows-on-Arm device); i8mm adds the rest on
-Snapdragon X._
+_5.75x more tokens per core-hour is 5.75x lower cost per token on any Arm cloud. Figures from the
+[benchmark workflow](.github/workflows/benchmark.yml); they vary a few percent per run. The fix I filed
+(PR #17654) is the TEPID row — dot-product, safe on every shipped Arm device; i8mm adds the rest where
+the silicon has it._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
@@ -129,10 +133,12 @@ fixes its build, that job fails on purpose.
 Three findings fall out:
 
 **1. Ollama's Windows-on-Arm build has no matrix or dot-product instructions.** Cause and one-line fix
-in [`examples/ollama-fix/`](examples/ollama-fix/); ~6-7x prefill, measured. Its Linux build is fine
-(the row above), so this is Windows-specific and build-flag-specific, not Ollama being incapable.
+in [`examples/ollama-fix/`](examples/ollama-fix/); ~5.75x prefill from the dot-product fix I filed, up to
+~6.7x with i8mm, measured on Cobalt 100. Its Linux build is fine (the row above), so this is
+Windows-specific and build-flag-specific, not Ollama being incapable.
 
-**2. Nothing in the ggml ecosystem ships SME — including the backends named for it.** llama.cpp's
+**2. No ggml / llama.cpp CPU backend ships SME — including the backends named for it** (ONNX Runtime and
+ExecuTorch, in the table above, *do* ship SME by default; this is specific to the ggml stack). llama.cpp's
 `libggml-cpu-armv9.2_1.so` / `_armv9.2_2.so` are named for the **Armv9.2-A architecture level** (where
 SME is an *optional* extension), and contain zero ZA-tile instructions, zero `smstart`, zero
 outer-products. Cause: SME reaches ggml only through KleidiAI, and `GGML_CPU_KLEIDIAI` defaults to
@@ -172,8 +178,8 @@ not a broken detector. `pytest` (24 tests) covers each instruction family agains
 encodings, the resync-through-data property, the coverage gate, and the single-word corroboration floor,
 so correctness is provable without any binary on disk.
 
-This validation is the receipt, not the headline. The headline is the ~6-7x an Ollama user is silently
-losing.
+This validation is the receipt, not the headline. The headline is the 5.75x more tokens per core-hour
+that one build flag recovers on Arm cloud silicon.
 
 ---
 
