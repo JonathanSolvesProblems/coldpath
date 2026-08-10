@@ -41,10 +41,10 @@ runner, only `-march` changing:
 | **TEPID** `armv8.2-a+dotprod` — the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~1.96M | **~5.75x** |
 | **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~640 | ~2.30M | **~6.7x** |
 
-_5.75x more tokens per core-hour is 5.75x lower cost per token on any Arm cloud. Figures from the
-[benchmark workflow](.github/workflows/benchmark.yml); they vary a few percent per run. The fix I filed
-(PR #17654) is the TEPID row — dot-product, safe on every shipped Arm device; i8mm adds the rest where
-the silicon has it._
+_5.75x more tokens per core-hour is 5.75x lower cost per token on any Arm cloud — the workflow's
+`compare` job computes it live as roughly **$0.45 → $0.08 per 1M tokens** (Graviton4 on-demand rate).
+Figures vary a few percent per run. The fix I filed (PR #17654) is the TEPID row — dot-product, safe on
+every shipped Arm device; i8mm adds the rest where the silicon has it._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
