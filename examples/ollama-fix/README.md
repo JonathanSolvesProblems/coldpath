@@ -77,9 +77,12 @@ Actions tab. coldpath scans each build to prove what landed in it; `llama-bench`
 
 | build | what coldpath sees | prompt processing (pp512) | vs COLD |
 |---|---|---:|---:|
-| **COLD** `armv8-a` (Ollama's current WoA build) | i8mm 0, dotprod 0 | 94.67 tok/s | 1.0x |
-| **TEPID** `armv8.2-a+dotprod` (this patch) | dotprod 1,044 | 543.94 tok/s | **5.75x** |
-| **WARM** `armv8.6-a+i8mm` (Snapdragon X option) | i8mm 268, dotprod 1,044 | 659.71 tok/s | **6.97x** |
+| **COLD** `armv8-a` (Ollama's current WoA build) | i8mm 0, dotprod 0 | ~95 tok/s | 1.0x |
+| **TEPID** `armv8.2-a+dotprod` (this patch) | dotprod 1,044 | ~545 tok/s | **~5.75x** |
+| **WARM** `armv8.6-a+i8mm` (Snapdragon X option) | i8mm 268, dotprod 1,044 | ~640 tok/s | **~6.7x** |
+
+_Representative figures from the CI benchmark on the shared Neoverse N2 runner; they vary a few percent
+per run and reproduce at ~6-7x._
 
 Token generation (decode) is memory-bandwidth-bound and rides on dot-product, not the matrix unit:
 54.54 -> 122.20 tok/s (2.24x) from the dotprod fix, and essentially flat from i8mm on top (that is

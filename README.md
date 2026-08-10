@@ -29,13 +29,18 @@ It is not a limitation of the platform. llama.cpp's own Windows-on-Arm build, **
 source**, ships working kernels (`i8mm 244, dotprod 1,052`). Ollama does not fork ggml's kernels: it
 fetches upstream llama.cpp pinned by `LLAMA_CPP_VERSION` and builds it, with only blob-compatibility
 patches. The difference is a single missing build flag, and it costs, measured on an Arm Neoverse N2
-server, **~6.97x on prompt processing**:
+server, **~6-7x on prompt processing**:
 
 | build (same model, same N2 hardware, only `-march` changes) | coldpath sees | pp512 tok/s | vs COLD |
 |---|---|---:|---:|
-| **COLD** `armv8-a` — what Ollama ships on Windows-on-Arm | i8mm 0, dotprod 0 | 94.67 | 1.0x |
-| **TEPID** `armv8.2-a+dotprod` — the safe one-line fix | dotprod 1,044 | 543.94 | **5.75x** |
-| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | 659.71 | **6.97x** |
+| **COLD** `armv8-a` — what Ollama ships on Windows-on-Arm | i8mm 0, dotprod 0 | ~95 | 1.0x |
+| **TEPID** `armv8.2-a+dotprod` — the safe one-line fix I filed | dotprod 1,044 | ~545 | **~5.75x** |
+| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~640 | **~6.7x** |
+
+_Representative figures from the [benchmark workflow](.github/workflows/benchmark.yml) on the shared
+Neoverse N2 runner; they vary a few percent per run and reproduce at ~6-7x. The fix I filed upstream is
+the TEPID row (dot-product, ~5.75x, safe on every Windows-on-Arm device); i8mm adds the rest on
+Snapdragon X._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
