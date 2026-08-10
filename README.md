@@ -135,7 +135,9 @@ Three findings fall out:
 **1. Ollama's Windows-on-Arm build has no matrix or dot-product instructions.** Cause and one-line fix
 in [`examples/ollama-fix/`](examples/ollama-fix/); ~5.75x prefill from the dot-product fix I filed, up to
 ~6.7x with i8mm, measured on Cobalt 100. Its Linux build is fine (the row above), so this is
-Windows-specific and build-flag-specific, not Ollama being incapable.
+Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed COLD on every release
+tested from v0.31.2 through the current v0.32.7, and [`test.yml`](.github/workflows/test.yml) re-downloads
+the *latest* release and re-checks it on every push, so this claim can't silently rot.
 
 **2. No ggml / llama.cpp CPU backend ships SME — including the backends named for it** (ONNX Runtime and
 ExecuTorch, in the table above, *do* ship SME by default; this is specific to the ggml stack). llama.cpp's
