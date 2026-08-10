@@ -1,19 +1,16 @@
-"""Ground-truth tests for instruction detection.
+"""Ground-truth tests for instruction detection, using hand-assembled AArch64 encodings.
 
-These use hand-assembled AArch64 encodings, so they prove the detector is correct without needing
-any binary on disk. Each encoding below is a real instruction word, verified against the Arm ARM.
-
-The regression test at the bottom is the important one: capstone decodes SVE and SME correctly but
-leaves insn.groups EMPTY for both. An earlier version of this tool detected on groups and silently
-reported zero SME everywhere -- the same class of false negative coldpath exists to find. If someone
-"simplifies" the detector back to groups, that test fails.
+These prove the detector is correct without needing any binary on disk. Each encoding is a real
+instruction word verified against the Arm ARM. The suite also pins the three hardening properties a
+skeptical Arm engineer would attack: SVE/SME are detected despite empty capstone groups, the sweep
+resyncs through embedded data instead of truncating, and a single stray data word cannot flip a
+verdict or fake a COLD.
 """
 
 import pytest
 
-from coldpath.isa import scan_sections
+from coldpath.isa import scan_sections, VERDICT_FLOOR
 
-# (encoding, disassembly) -- one instruction each, little-endian words.
 SME = [
     (0xD503477F, "smstart"),
     (0xD503467F, "smstop"),
@@ -21,24 +18,11 @@ SME = [
     (0x80810000, "fmopa za0.s, p0/m, p0/m, z0.s, z1.s"),
     (0xA0810000, "smopa za0.s, p0/m, p0/m, z0.b, z1.b"),
 ]
-I8MM_NEON = [
-    (0x4E82A420, "smmla v0.4s, v1.16b, v2.16b"),
-    (0x6E82A420, "ummla v0.4s, v1.16b, v2.16b"),
-]
-DOTPROD_NEON = [
-    (0x4E829420, "sdot v0.4s, v1.16b, v2.16b"),
-    (0x6E829420, "udot v0.4s, v1.16b, v2.16b"),
-]
-SVE = [
-    (0x2518E000, "ptrue p0.b"),
-    (0xA540A000, "ld1w {z0.s}, p0/z, [x0]"),
-]
-# Plain scalar/NEON arithmetic. Must NOT be counted as anything.
-NEUTRAL = [
-    (0xD503201F, "nop"),
-    (0x8B010000, "add x0, x0, x1"),
-    (0x4E21D800, "fadd v0.4s, v0.4s, v1.4s"),
-]
+I8MM_NEON = [(0x4E82A420, "smmla v0.4s, v1.16b, v2.16b"), (0x6E82A420, "ummla ...")]
+DOTPROD_NEON = [(0x4E829420, "sdot v0.4s, v1.16b, v2.16b"), (0x6E829420, "udot ...")]
+SVE = [(0x2518E000, "ptrue p0.b"), (0xA540A000, "ld1w {z0.s}, p0/z, [x0]")]
+NEUTRAL = [(0xD503201F, "nop"), (0x8B010000, "add x0, x0, x1"), (0x4E21D800, "fadd v0.4s, ...")]
+DATA = 0xFFFFFFFF  # a word capstone cannot decode; stands in for a literal-pool / jump-table entry
 
 
 def _scan(words):
@@ -46,30 +30,29 @@ def _scan(words):
     return scan_sections([(".text", 0x1000, blob)])
 
 
+# ---- raw detection of each family ----
+
 @pytest.mark.parametrize("word,asm", SME)
 def test_sme_detected(word, asm):
     assert _scan([word]).sme == 1, f"missed SME: {asm}"
 
 
-def test_sme_outer_product_counted_separately():
-    r = _scan([w for w, _ in SME])
-    assert r.sme == len(SME)
-    assert r.counts["sme_mopa"] == 2, "fmopa and smopa are outer products"
+def test_mopa_and_ctrl_are_anchors():
+    assert _scan([SME[0][0]]).sme_anchor == 1   # smstart
+    assert _scan([SME[3][0]]).sme_anchor == 1   # fmopa (outer product)
+    assert _scan([SME[2][0]]).sme_anchor == 0   # bare "zero {za}" is not an anchor
 
 
 @pytest.mark.parametrize("word,asm", I8MM_NEON)
 def test_i8mm_neon(word, asm):
     r = _scan([word])
-    assert r.i8mm == 1, f"missed i8mm: {asm}"
-    assert r.counts["i8mm_neon"] == 1
-    assert r.counts["i8mm_sve"] == 0
+    assert r.i8mm == 1 and r.counts["i8mm_neon"] == 1 and r.counts["i8mm_sve"] == 0
 
 
 @pytest.mark.parametrize("word,asm", DOTPROD_NEON)
-def test_dotprod_neon(word, asm):
+def test_dotprod_is_not_matrix(word, asm):
     r = _scan([word])
-    assert r.dotprod == 1, f"missed dotprod: {asm}"
-    assert r.i8mm == 0, "dotprod is not a matrix instruction"
+    assert r.dotprod == 1 and r.i8mm == 0
 
 
 @pytest.mark.parametrize("word,asm", SVE)
@@ -83,44 +66,78 @@ def test_neutral_not_counted(word, asm):
     assert (r.sme, r.i8mm, r.bf16, r.dotprod, r.sve) == (0, 0, 0, 0, 0), f"false positive on {asm}"
 
 
-def test_verdicts():
-    assert _scan([w for w, _ in NEUTRAL]).level == "neon"
-    assert _scan([DOTPROD_NEON[0][0]]).level == "dotprod"
-    assert _scan([I8MM_NEON[0][0]]).level == "i8mm"
-    assert _scan([SME[3][0]]).level == "sme"
+# ---- verdict + corroboration floor ----
 
-    assert not _scan([w for w, _ in NEUTRAL]).has_matrix
-    assert not _scan([DOTPROD_NEON[0][0]]).has_matrix, "dot-product alone is not a matrix unit"
-    assert _scan([I8MM_NEON[0][0]]).has_matrix
-    assert _scan([SME[0][0]]).has_matrix
+def test_verdicts_need_the_floor():
+    # A single matmul instruction does NOT decide a verdict (could be one data word).
+    assert _scan([I8MM_NEON[0][0]]).verdict == "COLD"
+    # Two do.
+    assert _scan([I8MM_NEON[0][0], I8MM_NEON[1][0]]).verdict == "WARM"
+    assert _scan(DOTPROD_ALL := [w for w, _ in DOTPROD_NEON]).verdict == "TEPID"
 
 
-def test_dotprod_alone_is_not_i8mm():
-    """The distinction that matters: a dotprod-only build looks fast but has no matrix unit."""
+def test_single_za_word_cannot_fake_hot():
+    """A lone ZA-shaped word (~1-in-476 in random data) must not flip the verdict to HOT/SME."""
+    r = _scan([SME[2][0]])          # one "zero {za}", no anchor
+    assert r.sme == 1
+    assert r.sme_ok is False
+    assert r.verdict == "COLD"
+
+
+def test_single_anchor_is_enough_for_sme():
+    assert _scan([SME[0][0], NEUTRAL[0][0]]).sme_ok is True   # smstart is a hard anchor
+    assert _scan([SME[3][0], NEUTRAL[0][0]]).sme_ok is True   # fmopa is a hard anchor
+
+
+def test_dotprod_alone_is_not_matrix():
     r = _scan([w for w, _ in DOTPROD_NEON])
-    assert r.dotprod == 2
-    assert r.i8mm == 0
-    assert r.level == "dotprod"
-    assert not r.has_matrix
+    assert r.dotprod == 2 and r.i8mm == 0
+    assert r.has_matrix is False and r.verdict == "TEPID"
+
+
+# ---- the hardening the adversarial review demanded ----
+
+def test_resync_through_embedded_data():
+    """One undecodable data word must NOT truncate the scan (the false-COLD bug).
+
+    Realistic ratio: a single literal-pool word among plenty of real code. The two smmla AFTER the
+    data word must still be counted -- the default (halting) sweep would report only the one before.
+    """
+    neutral = [w for w, _ in NEUTRAL]
+    r = _scan(neutral * 20 + [I8MM_NEON[0][0], DATA, I8MM_NEON[0][0], I8MM_NEON[1][0]] + neutral * 20)
+    assert r.i8mm == 3, "sweep halted on data instead of resyncing -> false COLD"
+    assert r.data_words == 1
+    assert r.verdict == "WARM"
+
+
+def test_low_coverage_refuses_to_assert_cold():
+    """If a section is mostly unreadable, the verdict is UNKNOWN, never a false COLD."""
+    r = _scan([DATA] * 200 + [NEUTRAL[0][0]])
+    assert r.coverage < 0.1
+    assert r.verdict == "UNKNOWN"
+
+
+def test_clean_code_has_full_coverage():
+    r = _scan([w for w, _ in NEUTRAL] * 40)
+    assert r.coverage == 1.0
+    assert r.verdict == "COLD"          # real code, genuinely no matrix instructions
 
 
 def test_capstone_leaves_sve_sme_groups_empty():
-    """REGRESSION GUARD. Do not rewrite the detector to use insn.groups.
+    """REGRESSION GUARD: do not rewrite detection to use insn.groups.
 
-    Capstone 5.x decodes SVE/SME correctly but populates no group metadata for them. Detecting on
-    groups yields a silent zero -- which is precisely the bug class this tool ships to catch.
+    Capstone 5.x decodes SVE/SME correctly but reports no group metadata for them, so group-based
+    detection silently returns zero -- the bug class coldpath ships to catch.
     """
     import capstone
 
     md = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_LITTLE_ENDIAN)
     md.detail = True
-
     for word, asm in SME + SVE:
         insn = next(md.disasm(word.to_bytes(4, "little"), 0x1000))
-        assert len(insn.groups) == 0, (
-            f"capstone now reports groups for {asm!r}. If this fails, capstone gained group "
-            f"metadata -- the detector is still correct, but this guard can be relaxed."
-        )
-        # ...and we detect it anyway, because we read register operands instead.
-        r = _scan([word])
-        assert r.sme or r.sve, f"detector missed {asm}"
+        assert len(insn.groups) == 0, f"capstone now reports groups for {asm!r}; guard can relax"
+        assert _scan([word]).sme or _scan([word]).sve, f"detector missed {asm}"
+
+
+def test_floor_constant_is_sane():
+    assert VERDICT_FLOOR >= 2

@@ -58,19 +58,22 @@ jobs:
           git clone --depth 1 https://github.com/ggml-org/llama.cpp
           cmake -S llama.cpp -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
             -DGGML_NATIVE=OFF \
             -DGGML_CPU_ALL_VARIANTS=OFF \
             -DGGML_CPU_ARM_ARCH=${{ matrix.arch }} \
-            -DLLAMA_CURL=ON \
+            -DLLAMA_CURL=OFF \
             -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF
+            -DLLAMA_BUILD_EXAMPLES=ON
           cmake --build build -j$(nproc) --target llama-bench
 
       # The whole thesis in one step: the -march flag decides what is IN the binary.
+      # Scan the ggml-cpu shared lib if present, else the llama-bench binary it was linked into.
       - name: Prove what is in the binary
         id: scan
         run: |
           LIB=$(find build -name 'libggml-cpu*.so' | head -1)
+          [ -z "$LIB" ] && LIB=$(find build -name 'llama-bench' -type f | head -1)
           echo "scanning $LIB"
           coldpath "$LIB"
           coldpath "$LIB" --json > scan.json
@@ -90,23 +93,32 @@ jobs:
           cat bench.json
 
       - name: Summarise
+        if: always()
         run: |
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
-          scan = json.load(open("scan.json"))["binaries"][0]
-          bench = json.load(open("bench.json"))
-          pp = next(b["avg_ts"] for b in bench if b["n_prompt"] > 0)
-          tg = next(b["avg_ts"] for b in bench if b["n_gen"] > 0)
-          print(f"## ${{ matrix.name }} — `-march=${{ matrix.arch }}`")
+          print("## ${{ matrix.name }} — `-march=${{ matrix.arch }}`")
           print("_${{ matrix.note }}_\n")
-          print("| in the binary | count |")
-          print("|---|---|")
-          for k in ("sme", "i8mm", "bf16", "dotprod"):
-              print(f"| {k} | {scan[k]:,} |")
-          print(f"\n| measured | tokens/sec |")
-          print("|---|---|")
-          print(f"| prompt processing (pp512) | **{pp:.2f}** |")
-          print(f"| token generation (tg128) | **{tg:.2f}** |")
+          try:
+              scan = json.load(open("scan.json"))["binaries"][0]
+              print("| in the binary | count |")
+              print("|---|---|")
+              for k in ("sme", "i8mm", "bf16", "dotprod"):
+                  print(f"| {k} | {scan.get(k, 0):,} |")
+          except Exception as e:
+              print(f"scan summary unavailable: {e}")
+          try:
+              bench = json.load(open("bench.json"))
+              def ts(row):
+                  return row.get("avg_ts") or row.get("t_avg") or row.get("ts")
+              pp = next((ts(b) for b in bench if b.get("n_prompt", 0) > 0), None)
+              tg = next((ts(b) for b in bench if b.get("n_gen", 0) > 0), None)
+              print("\n| measured | tokens/sec |")
+              print("|---|---|")
+              if pp is not None: print(f"| prompt processing (pp512) | **{pp:.2f}** |")
+              if tg is not None: print(f"| token generation (tg128) | **{tg:.2f}** |")
+          except Exception as e:
+              print(f"\nbench summary unavailable: {e} (raw bench.json uploaded as artifact)")
           PY
 
       - uses: actions/upload-artifact@v4

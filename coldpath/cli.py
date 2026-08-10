@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import sys
@@ -16,13 +17,22 @@ from .isa import Result, scan_sections
 
 ARCHIVES = {".whl", ".apk", ".aar", ".zip", ".jar", ".tar", ".tgz", ".gz", ".zst", ".xz", ".bz2"}
 
+BANNERS = {
+    "HOT":     "HOT   -- SME matrix engine",
+    "WARM":    "WARM  -- i8mm matrix instructions",
+    "TEPID":   "TEPID -- dot-product only, no matrix unit",
+    "COLD":    "COLD  -- 0 matrix instructions",
+    "UNKNOWN": "UNKNOWN -- too little of .text was decodable to judge",
+}
+
 
 def _expand(path: pathlib.Path, tmp: pathlib.Path) -> list[pathlib.Path]:
     """Files to scan. Archives are unpacked; directories are walked."""
     if path.is_dir():
         return [p for p in sorted(path.rglob("*")) if p.is_file() and looks_like_binary(p)]
 
-    if path.suffix.lower() in ARCHIVES or "".join(path.suffixes[-2:]).lower() in {".tar.gz", ".tar.zst", ".tar.xz"}:
+    suffixes = "".join(path.suffixes[-2:]).lower()
+    if path.suffix.lower() in ARCHIVES or suffixes in {".tar.gz", ".tar.zst", ".tar.xz", ".tar.bz2"}:
         dest = tmp / path.name
         dest.mkdir(parents=True, exist_ok=True)
         try:
@@ -31,13 +41,13 @@ def _expand(path: pathlib.Path, tmp: pathlib.Path) -> list[pathlib.Path]:
                     z.extractall(dest)
             elif path.suffix.lower() == ".zst":
                 import zstandard
-                with path.open("rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as r:
-                    with tarfile.open(fileobj=r, mode="r|") as t:
+                with path.open("rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as reader:
+                    with tarfile.open(fileobj=reader, mode="r|") as t:
                         t.extractall(dest)
             else:
                 with tarfile.open(path) as t:
                     t.extractall(dest)
-        except Exception as e:  # noqa: BLE001 - a corrupt archive shouldn't crash a scan of 40 others
+        except Exception as e:  # noqa: BLE001 - a corrupt archive must not abort a 40-binary scan
             print(f"  ! could not unpack {path.name}: {e}", file=sys.stderr)
             return []
         return [p for p in sorted(dest.rglob("*")) if p.is_file() and looks_like_binary(p)]
@@ -48,31 +58,27 @@ def _expand(path: pathlib.Path, tmp: pathlib.Path) -> list[pathlib.Path]:
 def _label(found: pathlib.Path, given: pathlib.Path, tmp: pathlib.Path) -> str:
     """Name a result unambiguously. Two files called ggml-cpu.dll is the whole point of this tool."""
     try:
-        if tmp in found.parents:                       # came out of an archive
-            inner = found.relative_to(tmp / given.name)
-            return f"{given.name}::{inner.as_posix()}"
+        if tmp in found.parents:
+            return f"{given.name}::{found.relative_to(tmp / given.name).as_posix()}"
         if given.is_dir():
             return (given.name / found.relative_to(given)).as_posix()
     except ValueError:
         pass
-    # A plain file argument: keep enough path to tell two same-named binaries apart.
     parts = found.parts
     return "/".join(parts[-3:]) if len(parts) >= 3 else found.as_posix()
 
 
-def _verdict(r: Result) -> tuple[str, str]:
-    if r.sme:
-        return "HOT", "SME"
-    if r.i8mm:
-        return "WARM", "i8mm"
-    if r.dotprod:
-        return "TEPID", "dotprod"
-    return "COLD", "none"
+def _sha256(path: pathlib.Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 ROWS = [
     ("SME  (ZA tile)", lambda r: r.sme),
-    ("  outer-product (MOPA)", lambda r: r.counts["sme_mopa"]),
+    ("  streaming/MOPA anchor", lambda r: r.sme_anchor),
     ("i8mm (smmla)", lambda r: r.i8mm),
     ("bf16 (bfmmla/bfdot)", lambda r: r.bf16),
     ("dotprod (sdot)", lambda r: r.dotprod),
@@ -80,27 +86,32 @@ ROWS = [
 ]
 
 
-def report(name: str, r: Result, verbose: bool) -> None:
-    verdict, best = _verdict(r)
-    banner = {
-        "COLD": "COLD PATH  -- 0 matrix instructions",
-        "TEPID": "TEPID  -- dot-product only, no matrix unit",
-        "WARM": "WARM  -- i8mm matrix, no SME",
-        "HOT": "HOT  -- SME matrix engine",
-    }[verdict]
-
+def report(name: str, r: Result, sha: str | None, verbose: bool) -> None:
     print(f"\n{name}")
-    print(f"  {r.total:,} instructions   {banner}")
-    if r.coverage < 0.95:
-        print(f"  ! only {r.coverage*100:.1f}% of .text decoded -- treat counts as a lower bound")
-
+    meta = f"  {r.real_insns:,} instructions   {r.coverage*100:.1f}% decoded   {BANNERS[r.verdict]}"
+    print(meta)
+    if sha:
+        print(f"  sha256:{sha[:16]}")
+    if r.verdict == "UNKNOWN":
+        print(f"  ! only {r.min_section_coverage*100:.1f}% of the smallest code section decoded; "
+              f"cannot assert presence or absence")
     for label, get in ROWS:
         n = get(r)
         print(f"    {'ok  ' if n else '--  '} {label:<26} {n:>9,}")
+    if verbose and r.verdict == "COLD":
+        print("\n    This build ships zero matrix and dot-product instructions. On any Arm CPU it")
+        print("    runs LLM matmul in scalar/NEON only -- the fast kernels were not compiled in.")
 
-    if verbose and verdict == "COLD":
-        print("\n    This binary cannot execute a matrix or dot-product instruction on ANY Arm CPU,")
-        print("    no matter what hardware it runs on. The kernels were not compiled in.")
+
+def _result_json(name: str, r: Result, sha: str) -> dict:
+    return {
+        "name": name, "sha256": sha, "verdict": r.verdict,
+        "instructions": r.real_insns, "coverage": round(r.coverage, 4),
+        "min_section_coverage": round(r.min_section_coverage, 4),
+        "sme": r.sme, "sme_anchor": r.sme_anchor, "sme_mopa": r.counts["sme_mopa"],
+        "i8mm": r.i8mm, "bf16": r.bf16, "dotprod": r.dotprod, "sve": r.sve,
+        "has_matrix": r.has_matrix,
+    }
 
 
 def main(argv=None) -> int:
@@ -112,13 +123,16 @@ def main(argv=None) -> int:
     ap.add_argument("paths", nargs="+", type=pathlib.Path,
                     help="binaries, directories, or archives (.whl, .apk, .tar.gz, .zip)")
     ap.add_argument("--require", choices=["sme", "i8mm", "bf16", "dotprod"], metavar="FEATURE",
-                    help="fail (exit 1) if any scanned binary lacks FEATURE")
+                    help="fail (exit 1) unless FEATURE is present")
+    ap.add_argument("--any", action="store_true",
+                    help="with --require: pass if ANY scanned binary has FEATURE (use for a "
+                         "multi-variant release that dlopens the best of libggml-cpu-*.so at runtime)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("-q", "--quiet", action="store_true", help="only report failures")
     ap.add_argument("-V", "--version", action="version", version=f"coldpath {__version__}")
     args = ap.parse_args(argv)
 
-    results: list[tuple[str, Result]] = []
+    results: list[tuple[str, Result, str]] = []
     skipped = 0
 
     with tempfile.TemporaryDirectory(prefix="coldpath-") as td:
@@ -140,36 +154,33 @@ def main(argv=None) -> int:
                 if not secs:
                     skipped += 1
                     continue
-                results.append((_label(f, p, tmp), scan_sections(secs)))
+                results.append((_label(f, p, tmp), scan_sections(secs), _sha256(f)))
 
     if not results:
         print("coldpath: no AArch64 binaries found", file=sys.stderr)
         return 2
 
-    failed = [n for n, r in results if args.require and not r.has(args.require)]
-
     if args.json:
         print(json.dumps({
             "version": __version__,
-            "binaries": [{
-                "name": n,
-                "verdict": _verdict(r)[0],
-                "instructions": r.total,
-                "coverage": round(r.coverage, 4),
-                "sme": r.sme, "sme_mopa": r.counts["sme_mopa"],
-                "i8mm": r.i8mm, "bf16": r.bf16, "dotprod": r.dotprod, "sve": r.sve,
-            } for n, r in results],
+            "binaries": [_result_json(n, r, s) for n, r, s in results],
             "skipped_non_aarch64": skipped,
             "required": args.require,
-            "failed": failed,
         }, indent=2))
     else:
-        for n, r in results:
-            if args.quiet and not (args.require and n in failed):
+        for n, r, s in results:
+            if args.quiet and not (args.require and not r.has(args.require)):
                 continue
-            report(n, r, verbose=not args.quiet)
+            report(n, r, s, verbose=not args.quiet)
 
     if args.require:
+        satisfied = [(n, r) for n, r, _ in results if r.has(args.require)]
+        if args.any:
+            ok = len(satisfied) > 0
+            if not ok:
+                print(f"\ncoldpath: no scanned binary has '{args.require}'", file=sys.stderr)
+            return 0 if ok else 1
+        failed = [n for n, r, _ in results if not r.has(args.require)]
         if failed:
             print(f"\ncoldpath: {len(failed)} of {len(results)} binaries lack '{args.require}':",
                   file=sys.stderr)
