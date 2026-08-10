@@ -1,8 +1,8 @@
 # coldpath
 
 **Popular LLM runtimes ship on Arm with the chip's matrix hardware switched off. On Azure Cobalt 100
-(Neoverse N2, a cloud Arm CPU) that is 5.75x on prompt-processing throughput and on the cost per token —
-about $0.45 versus $0.08 per million. I built the tool that finds it in any binary, fixed the most
+(Neoverse N2, a cloud Arm CPU) that is 5.75x on prompt processing and ~2.2x on generation — about $0.45
+versus $0.08 per million prompt tokens. I built the tool that finds it in any binary, fixed the most
 popular offender in one line upstream, and gated it so a cold build can't reach your Arm cloud fleet.**
 
 `coldpath` disassembles any AArch64 binary and proves whether it *contains, and can dispatch,* the chip's
@@ -28,16 +28,20 @@ lib/ollama/ggml-cpu.dll
 That is Ollama's official Windows-on-Arm build (v0.31.2): **zero** matrix, **zero** dot-product
 instructions, every matmul in scalar/NEON. It is not a platform limit. llama.cpp's own Windows-on-Arm
 build, **same OS, same ggml source**, ships the kernels (`i8mm 244, dotprod 1,052`). Ollama doesn't fork
-ggml: it builds pinned upstream llama.cpp with one flag missing. And it is not a Windows quirk either:
-the *default* Arm64 build path (`GGML_NATIVE=OFF`, no `-march`) produces the same cold binary anywhere,
-so a mis-built cloud container is one flag away from this.
+ggml: it builds pinned upstream llama.cpp with one flag missing. This is a **distribution** hazard, not a
+build default: a native `cmake` build detects the host and comes out warm, but any *portable* build
+(cross-compiled, reproducible, or explicitly `GGML_NATIVE=OFF` for device compatibility — which is how
+prebuilt binaries are made) must pick a target `-march` or fall back to baseline `armv8-a`. That is the
+choice a distributor makes, and the one Ollama got wrong for Windows-on-Arm. (Distributors who use
+`GGML_CPU_ALL_VARIANTS=ON` runtime dispatch avoid it, which is why Ollama's Linux arm64 build is warm.)
 
 What it costs, measured on **Azure Cobalt 100 (Neoverse N2)** — a cloud Arm CPU, on the free GitHub
-runner, only `-march` changing:
+runner. Every row is built `GGML_NATIVE=OFF` with a pinned `-march` to isolate the ISA effect; only
+`-march` changes:
 
-| build (same model + hardware, only `-march` changes) | coldpath sees | pp512 tok/s | $ / 1M tokens | vs COLD |
+| build (`GGML_NATIVE=OFF`, pinned `-march`) | coldpath sees | pp512 tok/s | $ / 1M tokens | vs COLD |
 |---|---|---:|---:|---:|
-| **COLD** `armv8-a` — Ollama's Windows build, and the naive Arm64 default | i8mm 0, dotprod 0 | ~95 | ~$0.45 | 1.0x |
+| **COLD** `armv8-a` — the baseline a portable build falls back to (Ollama's Windows build) | i8mm 0, dotprod 0 | ~95 | ~$0.45 | 1.0x |
 | **TEPID** `armv8.2-a+dotprod` — the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~$0.08 | **~5.75x** |
 | **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~660 | ~$0.065 | **~6.9x** |
 
@@ -134,10 +138,10 @@ Three findings fall out:
 
 **1. Ollama's Windows-on-Arm build has no matrix or dot-product instructions.** Cause and one-line fix
 in [`examples/ollama-fix/`](examples/ollama-fix/); ~5.75x prefill from the dot-product fix I filed, up to
-~6.7x with i8mm, measured on Cobalt 100. Its Linux build is fine (the row above), so this is
-Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed COLD on every release
-tested from v0.31.2 through the current v0.32.7, and [`test.yml`](.github/workflows/test.yml) re-downloads
-the *latest* release and re-checks it on every push, so this claim can't silently rot.
+~6.9x with i8mm, measured on Cobalt 100. Its Linux build is fine (the row above), so this is
+Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed COLD on **all 8 stable
+releases** from v0.31.2 through the current v0.32.7, and [`test.yml`](.github/workflows/test.yml)
+re-downloads the *latest* release and re-checks it on every push, so this claim can't silently rot.
 
 **2. No ggml / llama.cpp CPU backend ships SME — including the backends named for it** (ONNX Runtime and
 ExecuTorch, in the table above, *do* ship SME by default; this is specific to the ggml stack). llama.cpp's
@@ -180,8 +184,8 @@ not a broken detector. `pytest` (24 tests) covers each instruction family agains
 encodings, the resync-through-data property, the coverage gate, and the single-word corroboration floor,
 so correctness is provable without any binary on disk.
 
-This validation is the receipt, not the headline. The headline is the 5.75x lower cost per token that one
-build flag recovers on Arm cloud silicon.
+This validation is the receipt, not the headline. The headline is the 5.75x on prefill (and ~2.2x on
+decode) that one build flag recovers on Arm cloud silicon.
 
 ---
 

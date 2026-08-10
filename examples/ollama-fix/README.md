@@ -79,7 +79,7 @@ Actions tab. coldpath scans each build to prove what landed in it; `llama-bench`
 |---|---|---:|---:|
 | **COLD** `armv8-a` (Ollama's current WoA build) | i8mm 0, dotprod 0 | ~95 tok/s | 1.0x |
 | **TEPID** `armv8.2-a+dotprod` (this patch) | dotprod 1,044 | ~545 tok/s | **~5.75x** |
-| **WARM** `armv8.6-a+i8mm` (Snapdragon X option) | i8mm 268, dotprod 1,044 | ~640 tok/s | **~6.7x** |
+| **WARM** `armv8.6-a+i8mm` (Snapdragon X option) | i8mm 268, dotprod 1,044 | ~660 tok/s | **~6.9x** |
 
 _Representative figures from the CI benchmark on the shared Neoverse N2 runner; they vary a few percent
 per run and reproduce at ~6-7x._
