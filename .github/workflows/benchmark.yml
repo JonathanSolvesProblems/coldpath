@@ -89,6 +89,7 @@ jobs:
       # where the missing -march flag costs the most. Other quants would understate the gap.
       - name: Benchmark
         run: |
+          lscpu | grep -iE "model name" | head -1 | sed 's/.*: *//' > cpu.txt
           ./build/bin/llama-bench -m model.gguf -p 512 -n 128 -r 3 -t $(nproc) -o json > bench.json
           cat bench.json
 
@@ -127,6 +128,7 @@ jobs:
           path: |
             scan.json
             bench.json
+            cpu.txt
 
   # Aggregate the three builds into the headline the Cloud AI judge actually wants:
   # what the cold path costs per token on cloud Arm silicon.
@@ -160,8 +162,14 @@ jobs:
               pp = next((b.get("avg_ts") for b in bench if b.get("n_prompt", 0) > 0), None)
               if pp:
                   rows[name] = (scan, pp)
+          cpu = "Neoverse N2"
+          for f in glob.glob("results/results-*/cpu.txt"):
+              t = open(f).read().strip()
+              if t:
+                  cpu = t
+                  break
           print("## What the cold path costs on Arm cloud silicon")
-          print("_Azure Cobalt 100 (Neoverse N2), the free `ubuntu-24.04-arm` runner. "
+          print(f"_Measured live on **{cpu}** (the free `ubuntu-24.04-arm` runner = Azure Cobalt 100). "
                 "Qwen2.5-0.5B Q4_0, only `-march` changes._\n")
           cold = rows.get("COLD", (None, None))[1]
           print("| build | i8mm | dotprod | pp512 tok/s | tokens / instance-hr | $ / 1M tokens* | vs COLD |")
