@@ -12,7 +12,7 @@ Ollama, the most popular way to run a local LLM, ships its Windows-on-Arm build 
 hardware switched off, zero matrix instructions, and any portable Arm build that misses one compile flag
 (pip wheels, Docker images, cross-compiled releases, which is how most binaries reach a cloud fleet) does
 the same. On Azure Cobalt 100 (Neoverse N2, a cloud Arm CPU) that flag is worth 5.75x on prompt processing
-and ~2.2x on generation, roughly $0.45 versus $0.08 per million prompt tokens. I built the tool that finds
+and ~2.3x on generation, roughly $0.45 versus $0.08 per million prompt tokens. I built the tool that finds
 it in any shipped binary with no Arm hardware, filed the one-line fix to the top offender upstream, and
 gated it in CI so a cold build can't reach your Arm fleet.**
 
@@ -237,7 +237,7 @@ encodings (including that `bfmmla` counts as matrix but `bfdot` does not), the r
 property, the coverage gate, and the single-word corroboration floor, so correctness is provable
 without any binary on disk.
 
-This validation is the receipt, not the headline. The headline is the 5.75x on prefill (and ~2.2x on
+This validation is the receipt, not the headline. The headline is the 5.75x on prefill (and ~2.3x on
 decode) that one build flag recovers on Arm cloud silicon.
 
 ---
