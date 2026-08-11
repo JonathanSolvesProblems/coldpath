@@ -19,6 +19,8 @@ SME = [
     (0xA0810000, "smopa za0.s, p0/m, p0/m, z0.b, z1.b"),
 ]
 I8MM_NEON = [(0x4E82A420, "smmla v0.4s, v1.16b, v2.16b"), (0x6E82A420, "ummla ...")]
+BF16_MATRIX_NEON = [(0x6E42EC20, "bfmmla v0.4s, v1.8h, v2.8h")]
+BF16_DOT_NEON = [(0x2E42FC20, "bfdot v0.2s, v1.4h, v2.4h")]
 DOTPROD_NEON = [(0x4E829420, "sdot v0.4s, v1.16b, v2.16b"), (0x6E829420, "udot ...")]
 SVE = [(0x2518E000, "ptrue p0.b"), (0xA540A000, "ld1w {z0.s}, p0/z, [x0]")]
 NEUTRAL = [(0xD503201F, "nop"), (0x8B010000, "add x0, x0, x1"), (0x4E21D800, "fadd v0.4s, ...")]
@@ -93,6 +95,20 @@ def test_dotprod_alone_is_not_matrix():
     r = _scan([w for w, _ in DOTPROD_NEON])
     assert r.dotprod == 2 and r.i8mm == 0
     assert r.has_matrix is False and r.verdict == "TEPID"
+
+
+def test_bf16_matmul_is_warm():
+    """bfmmla is a bf16 matrix multiply: it must count as a matrix kernel (WARM), like i8mm."""
+    r = _scan([w for w, _ in BF16_MATRIX_NEON] * 2)   # two, to clear the corroboration floor
+    assert r.bf16 == 2 and r.bf16_matrix == 2 and r.i8mm == 0
+    assert r.has_matrix is True and r.verdict == "WARM"
+
+
+def test_bf16_dot_is_not_matrix():
+    """bfdot is a bf16 dot product, not a matrix op: it must NOT reach WARM on its own."""
+    r = _scan([w for w, _ in BF16_DOT_NEON] * 2)
+    assert r.bf16 == 2 and r.bf16_matrix == 0
+    assert r.has_matrix is False and r.verdict != "WARM"
 
 
 # ---- the hardening the adversarial review demanded ----

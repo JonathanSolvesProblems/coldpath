@@ -65,7 +65,7 @@ what coldpath reports.
 based Surface SQ1/SQ2 and Snapdragon X / Oryon all have FEAT_DotProd), so there is no SIGILL risk on any
 shipped hardware. It restores the dot-product kernels that carry most of the win.
 
-For a Snapdragon-X-targeted build, `armv8.6-a+i8mm` (the WARM row below) additionally enables i8mm
+For a Snapdragon-X-targeted build, `armv8.6-a+i8mm+bf16` (the WARM row below) additionally enables i8mm
 (`smmla`), matching the i8mm path llama.cpp's own Windows-on-Arm release ships, at the cost of dropping
 pre-Snapdragon-X SQ-series compatibility (Cortex-A76 predates i8mm). That is the aggressive option; the
 patch here takes the conservative, zero-regression one.
@@ -80,13 +80,13 @@ Actions tab. coldpath scans each build to prove what landed in it; `llama-bench`
 |---|---|---:|---:|
 | **COLD** `armv8-a` (Ollama's current WoA build) | i8mm 0, dotprod 0 | ~95 tok/s | 1.0x |
 | **TEPID** `armv8.2-a+dotprod` (this patch) | dotprod 1,044 | ~545 tok/s | **~5.75x** |
-| **WARM** `armv8.6-a+i8mm` (Snapdragon X option) | i8mm 268, dotprod 1,044 | ~660 tok/s | **~6.9x** |
+| **WARM** `armv8.6-a+i8mm+bf16` (Snapdragon X option) | i8mm 268, dotprod 1,044 | ~660 tok/s | **~6.9x** |
 
 _Representative figures from the CI benchmark on the shared Neoverse N2 runner; they vary a few percent
 per run and reproduce at ~5.75x from the filed dot-product patch, up to ~6.9x with i8mm._
 
 Token generation (decode) is memory-bandwidth-bound and rides on dot-product, not the matrix unit:
-roughly 2.3x from the dot-product fix, and flat-to-slightly-lower once i8mm is added on top (expected:
+roughly 2.2x from the dot-product fix, and flat-to-slightly-lower once i8mm is added on top (expected:
 `smmla` is an outer product that pays off in the compute-bound prefill GEMM, not in batch-1 decode).
 Prompt processing is where the cold path costs the most: ~5.75x with the filed dot-product fix,
 up to ~6.9x with i8mm.
@@ -94,6 +94,16 @@ up to ~6.9x with i8mm.
 This likely also explains [ollama#8246](https://github.com/ollama/ollama/issues/8246): 5-10 seconds per
 token on one Arm chip, fine on another, closed with no root cause. That is the fingerprint of a build
 that fell back to scalar because the fast-path instructions were compiled out.
+
+## Verifying the fix without waiting for the merge
+
+I do not have to rebuild Ollama to know the flag is the whole story, because **llama.cpp already ships
+the counterfactual.** Its official Windows-on-Arm release is built from the same pinned ggml source as
+Ollama's, on the same OS, and differs only in that it sets a target `-march`. coldpath scores it **WARM**
+(`i8mm 244, dotprod 1,052`) where Ollama's is **COLD** (`0, 0`). Two real, shipped binaries, identical
+source, one build flag apart, opposite verdicts. The CI benchmark then rebuilds that same ggml three
+times changing only `-march` and measures what the flag is worth in tokens/sec, so the COLD -> WARM
+recovery is demonstrated on real binaries, not asserted.
 
 ## Status
 

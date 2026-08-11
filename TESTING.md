@@ -47,8 +47,9 @@ curl -L -o llama-win-arm64.zip \
 coldpath llama-win-arm64.zip
 ```
 
-Expected: the backend `ggml-cpu.dll` is **WARM**, with `i8mm 244` and `dotprod 1,052`. The same
-filename in Ollama's release was COLD with 0. That single-file comparison is the whole point.
+Expected: the backend `ggml-cpu.dll` is **WARM**, with `i8mm 244` and `dotprod 1,052` (these counts are
+stable across recent llama.cpp builds; the `RESULTS.md` scoreboard row is the same figures at b10344).
+The same filename in Ollama's release was COLD with 0. That single-file comparison is the whole point.
 
 Note on release archives: the `llama-*.exe` files next to the backend DLL are thin launcher shims
 that carry no kernels, so a strict gate over the whole archive fails on the shims. To gate a release
@@ -65,7 +66,7 @@ coldpath --require i8mm --any llama-win-arm64.zip ; echo $?    # -> 0  (backend 
 git clone https://github.com/JonathanSolvesProblems/coldpath
 cd coldpath
 pip install -e ".[dev]"
-pytest -q                     # -> 24 passed
+pytest -q                     # -> 26 passed
 ```
 
 `scripts/verify_ladder.py <llama.cpp release dir>` additionally reproduces llama.cpp's own eight-rung

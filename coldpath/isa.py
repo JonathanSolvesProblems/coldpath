@@ -28,7 +28,9 @@ import capstone
 # Integer / bfloat matmul and dot-product mnemonics. Each exists in a NEON form (V registers) and an
 # SVE form (Z registers) that require different -march features, so we split by register class.
 I8MM = frozenset({"smmla", "ummla", "usmmla"})
-BF16 = frozenset({"bfmmla", "bfdot", "bfmlalb", "bfmlalt"})
+BF16_MATRIX = frozenset({"bfmmla"})                     # bf16 2x2 matrix multiply: a real matrix kernel
+BF16_DOT = frozenset({"bfdot", "bfmlalb", "bfmlalt"})   # bf16 dot / widening MAC: not a matrix op
+BF16 = BF16_MATRIX | BF16_DOT
 DOTPROD = frozenset({"sdot", "udot", "usdot", "sudot"})
 SME_CTRL = frozenset({"smstart", "smstop"})
 
@@ -55,13 +57,19 @@ class Result:
     @property
     def i8mm(self) -> int: return self.counts["i8mm_neon"] + self.counts["i8mm_sve"]
     @property
-    def bf16(self) -> int: return self.counts["bf16_neon"] + self.counts["bf16_sve"]
+    def bf16(self) -> int:
+        return (self.counts["bf16m_neon"] + self.counts["bf16m_sve"]
+                + self.counts["bf16d_neon"] + self.counts["bf16d_sve"])
+    @property
+    def bf16_matrix(self) -> int:
+        """Only bf16 matrix-multiply (bfmmla); the dot/MAC bf16 forms do not count as a matrix kernel."""
+        return self.counts["bf16m_neon"] + self.counts["bf16m_sve"]
     @property
     def dotprod(self) -> int: return self.counts["dotprod_neon"] + self.counts["dotprod_sve"]
     @property
     def sve(self) -> int:
-        return (self.counts["sve_other"] + self.counts["i8mm_sve"]
-                + self.counts["bf16_sve"] + self.counts["dotprod_sve"])
+        return (self.counts["sve_other"] + self.counts["i8mm_sve"] + self.counts["bf16m_sve"]
+                + self.counts["bf16d_sve"] + self.counts["dotprod_sve"])
     @property
     def sme_anchor(self) -> int:
         """SME evidence that is near-impossible in random data: streaming control + outer products."""
@@ -90,7 +98,7 @@ class Result:
 
     @property
     def has_matrix(self) -> bool:
-        return self.sme_ok or self._passes("i8mm")
+        return self.sme_ok or self._passes("i8mm") or self._passes("bf16_matrix")
 
     @property
     def verdict(self) -> str:
@@ -99,7 +107,7 @@ class Result:
             return "UNKNOWN"
         if self.sme_ok:
             return "HOT"
-        if self._passes("i8mm"):
+        if self._passes("i8mm") or self._passes("bf16_matrix"):
             return "WARM"
         if self._passes("dotprod"):
             return "TEPID"
@@ -149,7 +157,8 @@ def scan_sections(sections) -> Result:
             if mnem in I8MM:
                 r.counts["i8mm_sve" if sve else "i8mm_neon"] += 1
             elif mnem in BF16:
-                r.counts["bf16_sve" if sve else "bf16_neon"] += 1
+                kind = "bf16m" if mnem in BF16_MATRIX else "bf16d"
+                r.counts[f"{kind}_sve" if sve else f"{kind}_neon"] += 1
             elif mnem in DOTPROD:
                 r.counts["dotprod_sve" if sve else "dotprod_neon"] += 1
             elif sve:

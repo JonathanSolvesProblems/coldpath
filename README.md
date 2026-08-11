@@ -7,19 +7,22 @@
 
 *A linter and CI gate for whether your Arm AI binary actually uses the chip's matrix hardware.*
 
-**The most popular local LLM runner ships its Arm build with the chip's matrix hardware switched off, and
-any portable Arm build that misses one compile flag does the same. On Azure Cobalt 100 (Neoverse N2, a
-cloud Arm CPU) the fix is 5.75x on prompt processing and ~2.2x on generation, which at a typical Arm-cloud
-rate is roughly $0.45 versus $0.08 per million prompt tokens. I built the tool that finds it in any
-binary, fixed the most popular offender in one line upstream, and gated it so a cold build can't reach
-your Arm cloud fleet.**
+**coldpath audits the binaries the Arm AI ecosystem actually ships, and it found the biggest one cold.
+Ollama, the most popular way to run a local LLM, ships its Windows-on-Arm build with the chip's matrix
+hardware switched off, zero matrix instructions, and any portable Arm build that misses one compile flag
+(pip wheels, Docker images, cross-compiled releases, which is how most binaries reach a cloud fleet) does
+the same. On Azure Cobalt 100 (Neoverse N2, a cloud Arm CPU) that flag is worth 5.75x on prompt processing
+and ~2.2x on generation, roughly $0.45 versus $0.08 per million prompt tokens. I built the tool that finds
+it in any shipped binary with no Arm hardware, filed the one-line fix to the top offender upstream, and
+gated it in CI so a cold build can't reach your Arm fleet.**
 
 > **$0.45 → $0.08 per 1M prompt tokens, from one build flag, measured live on Azure Cobalt 100 (Neoverse N2).**
 
-`coldpath` disassembles any AArch64 binary and proves whether it *contains, and can dispatch,* the chip's
-matrix and dot-product instructions (SME/SME2, i8mm, bf16, dotprod). Absence is dispositive: zero `smmla`
-means the binary cannot run an i8mm matmul on any core. It needs no Arm hardware and no profiler; it runs
-on the x86 laptop you already have, and as a CI gate that stops a cold build reaching production.
+`coldpath` disassembles any AArch64 binary and proves whether it *contains* the chip's matrix and
+dot-product instructions (SME/SME2, i8mm, bf16 matmul, dotprod). Absence is dispositive: zero `smmla`
+means the binary cannot run an i8mm matmul on any core, no matter how it dispatches at runtime. It needs
+no Arm hardware and no profiler, so it runs in CI and on the x86 laptop you already have, and it audits
+binaries you did not build (a shipped release, a pip wheel, an APK), not just your own source tree.
 
 ---
 
@@ -54,10 +57,10 @@ runner. Every row is built `GGML_NATIVE=OFF` with a pinned `-march` to isolate t
 |---|---|---:|---:|---:|
 | **COLD** `armv8-a`, the baseline a portable build falls back to (Ollama's Windows build) | i8mm 0, dotprod 0 | ~95 | ~$0.45 | 1.0x |
 | **TEPID** `armv8.2-a+dotprod`, the one-line fix I filed upstream | dotprod 1,044 | ~545 | ~$0.08 | **~5.75x** |
-| **WARM** `armv8.6-a+i8mm` | i8mm 268, dotprod 1,044 | ~660 | ~$0.065 | **~6.9x** |
+| **WARM** `armv8.6-a+i8mm+bf16` | i8mm 268, dotprod 1,044 | ~660 | ~$0.065 | **~6.9x** |
 
 _The tok/s and the 5.75x ratio are measured on the 4-vCPU Neoverse N2 runner; the $/1M-tokens applies a
-sample Arm-cloud on-demand rate (~$0.04/vCPU-hr, Graviton4-class), so only the dollar column assumes a
+sample Arm-cloud on-demand rate ($0.0385/vCPU-hr, Graviton4 c8g), so only the dollar column assumes a
 price. The workflow's `compare` job recomputes all of it live each run (figures vary a few percent). The
 fix I filed (PR #17654) is the TEPID row, dot-product, which is safe on every shipped Arm device; the
 6.9x WARM row needs i8mm, which server and newer mobile cores have but Windows-on-Arm's Cortex-A76-class
@@ -95,10 +98,12 @@ Two properties make this sound:
    correctly but leaves `insn.groups` empty for both, so group-based detection silently reports zero,
    the exact false-negative class this tool exists to catch.
 
-coldpath reports what is **present and reachable** in the binary. For ggml that equals what will
-execute, because dispatch is compile-time. For runtimes that dispatch at runtime (ONNX Runtime's MLAS,
-ACL), presence proves the kernel was shipped; coldpath does not claim to prove it is selected for a
-given shape. See [Scope](#scope-and-honest-limitations).
+coldpath reports what is **present** in the binary's `.text`, not a reachability or dispatch analysis.
+That distinction is deliberate: **absence** is the airtight direction (zero `smmla` means no core can
+ever run an i8mm matmul, however the library dispatches), and absence is the whole finding here. For
+ggml, presence also equals what will execute, because dispatch is compile-time. For runtimes that
+dispatch at runtime (ONNX Runtime's MLAS, ACL), presence proves the kernel was shipped; coldpath does
+not claim it is selected for a given shape. See [Scope](#scope-and-honest-limitations).
 
 ## Install
 
@@ -117,9 +122,9 @@ coldpath libfoo.so --json                  # machine-readable
 ```
 
 Reads AArch64 **ELF, PE and Mach-O** (including universal binaries) and looks inside `.whl`, `.apk`,
-`.zip`, `.tar.gz` and `.tar.zst`. Verdicts: **HOT** (SME), **WARM** (i8mm matrix), **TEPID** (dotprod
-only), **COLD** (nothing), **UNKNOWN** (too little of `.text` decodable to judge, coldpath refuses to
-assert absence it cannot back up).
+`.zip`, `.tar.gz` and `.tar.zst`. Verdicts: **HOT** (SME), **WARM** (i8mm or bf16 `bfmmla` matrix),
+**TEPID** (dotprod only), **COLD** (nothing), **UNKNOWN** (too little of `.text` decodable to judge,
+coldpath refuses to assert absence it cannot back up).
 
 ### As a CI gate
 
@@ -187,15 +192,15 @@ releases** (v0.32.2 was withdrawn) from v0.31.2 through the current v0.32.7, and
 [`test.yml`](.github/workflows/test.yml) re-downloads the *latest* release and re-checks it on every push,
 so this claim can't silently rot.
 
-**2. No ggml / llama.cpp CPU backend ships SME, including the backends named for it** (ONNX Runtime and
-ExecuTorch, in the table above, *do* ship SME by default; this is specific to the ggml stack). llama.cpp's
-`libggml-cpu-armv9.2_1.so` / `_armv9.2_2.so` are named for the **Armv9.2-A architecture level** (where
-SME is an *optional* extension), and contain zero ZA-tile instructions, zero `smstart`, zero
-outer-products. Cause: SME reaches ggml only through KleidiAI, and `GGML_CPU_KLEIDIAI` defaults to
-**OFF**, so stock builds contain no SME unless it is explicitly enabled at configure time. ggml's
-runtime dispatcher still loads the highest variant a CPU supports, so on an SME-capable Android device
-(Dimensity 9500, Snapdragon 8 Elite Gen 5) it selects the `armv9.2` backend believing it is optimized,
-and gets a library with no SME in it.
+**2. The ggml stack ships zero SME on every OS, so SME-capable silicon runs without the matrix-tile
+unit by default.** (ONNX Runtime and ExecuTorch, in the table above, *do* ship SME by default; this is
+specific to the ggml stack.) This is not a claim that the `armv9.2`-named backends *should* carry SME:
+SME is an *optional* extension at the Armv9.2-A level, so the filename was never a promise. The point is
+what happens in practice. SME reaches ggml only through KleidiAI, and `GGML_CPU_KLEIDIAI` defaults to
+**OFF**, so a stock build of `libggml-cpu-armv9.2_1.so` / `_armv9.2_2.so` contains zero ZA-tile
+instructions, zero `smstart`, zero outer-products. ggml's runtime dispatcher still loads the highest
+variant a CPU supports, so on an SME-capable device (Dimensity 9500, Snapdragon 8 Elite Gen 5) it loads
+the `armv9.2` backend and gets a library with no SME in it, leaving the matrix-tile unit unused.
 
 **3. The cold path is a build-flag choice, not a hardware or ecosystem limit.** ONNX Runtime and ggml
 depend on the *same* KleidiAI. I disassembled the stock aarch64 `onnxruntime` wheel and counted 469 SME
@@ -227,9 +232,10 @@ coldpath reproduces llama.cpp's own 8-variant ISA ladder exactly.
 ```
 
 **Positive control, SME really is findable.** The ORT wheel above proves a zero means a real absence,
-not a broken detector. `pytest` (24 tests) covers each instruction family against hand-assembled
-encodings, the resync-through-data property, the coverage gate, and the single-word corroboration floor,
-so correctness is provable without any binary on disk.
+not a broken detector. `pytest` (26 tests) covers each instruction family against hand-assembled
+encodings (including that `bfmmla` counts as matrix but `bfdot` does not), the resync-through-data
+property, the coverage gate, and the single-word corroboration floor, so correctness is provable
+without any binary on disk.
 
 This validation is the receipt, not the headline. The headline is the 5.75x on prefill (and ~2.2x on
 decode) that one build flag recovers on Arm cloud silicon.
@@ -238,9 +244,9 @@ decode) that one build flag recovers on Arm cloud silicon.
 
 ## Scope and honest limitations
 
-- **Static presence, not dynamic frequency.** coldpath proves an instruction is present and reachable,
-  not how often it runs. Absence is proof (the kernel cannot execute); presence is necessary, not
-  sufficient. For the headline finding the benchmark closes that gap directly: the WARM build runs ~6.9x
+- **Static presence, not dynamic frequency.** coldpath proves an instruction is present in `.text`, not
+  how often (or whether) it runs. Absence is proof (the kernel cannot execute on any core); presence is
+  necessary, not sufficient. For the headline finding the benchmark closes that gap directly: the WARM build runs ~6.9x
   faster than the byte-identical-source COLD build, and a binary that *contained* `smmla` but never
   dispatched to it would be no faster than COLD, so the speedup is live evidence the matrix path executes.
   For a runtime-dispatching library (ONNX Runtime's MLAS, ACL) coldpath proves the kernel shipped, not

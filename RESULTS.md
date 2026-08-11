@@ -15,7 +15,7 @@ Verdicts: **HOT** = SME matrix, **WARM** = i8mm matrix, **TEPID** = dot-product 
 | llama.cpp b10344, linux-arm64 (best of 8 variants) | WARM | 0 | 402 | 1,253 | `807564f5` |
 | llama.cpp b10344, win-arm64 | WARM | 0 | 244 | 1,052 | `b9a0dd0e` |
 | Ollama v0.31.2, linux-arm64 (best variant) | WARM | 0 | 384 | 1,110 | n/a |
-| **Ollama v0.31.2 – v0.32.7 (all 8 stable), win-arm64** | **COLD** | **0** | **0** | **0** | `536ada0d` (v0.31.2) |
+| **Ollama v0.31.2 to v0.32.7 (all 8 stable), win-arm64** | **COLD** | **0** | **0** | **0** | `536ada0d` (v0.31.2) |
 
 <sub>*macOS row sha truncated for display; run locally to pin.</sub>
 
