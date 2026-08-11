@@ -262,9 +262,14 @@ to "does my Arm AI binary actually use the matrix hardware."
 - **Anyone evaluating Arm instances**, to confirm the runtime they picked actually uses the silicon they
   are paying for.
 
-Three reusable artifacts come out of it: the upstream fix
+Reusable artifacts come out of it: the upstream fix
 ([PR #17654](https://github.com/ollama/ollama/pull/17654)), the [CI-gate Action](#as-a-ci-gate) others can
-drop into their own pipeline, and the [scan scoreboard](RESULTS.md) of official Arm AI binaries.
+drop into their own pipeline, the [scan scoreboard](RESULTS.md) of official Arm AI binaries, and a
+[field guide](docs/GUIDE.md) that teaches why Arm builds ship cold and how to check and fix any of your
+own, in one command.
+
+**New here?** Start with the [field guide](docs/GUIDE.md): the 30-second version, why it happens, how to
+check any build, and how to fix it.
 
 ## Licence
 

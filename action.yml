@@ -30,7 +30,7 @@ runs:
   using: composite
   steps:
     - shell: bash
-      run: pip install --quiet "coldpath @ git+https://github.com/${{ github.action_repository || 'JonathanSolvesProblems/coldpath' }}"
+      run: pip install --quiet coldpath
 
     - id: scan
       shell: bash
