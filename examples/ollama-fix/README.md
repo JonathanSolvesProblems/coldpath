@@ -86,9 +86,9 @@ _Representative figures from the CI benchmark on the shared Neoverse N2 runner; 
 per run and reproduce at ~5.75x from the filed dot-product patch, up to ~6.9x with i8mm._
 
 Token generation (decode) is memory-bandwidth-bound and rides on dot-product, not the matrix unit:
-54.54 -> 122.20 tok/s (2.24x) from the dotprod fix, and essentially flat from i8mm on top (that is
-expected: `smmla` is an outer product that pays off in the compute-bound prefill GEMM, not in batch-1
-decode). Prompt processing is where the cold path costs the most: ~5.75x with the filed dot-product fix,
+roughly 2.3x from the dot-product fix, and flat-to-slightly-lower once i8mm is added on top (expected:
+`smmla` is an outer product that pays off in the compute-bound prefill GEMM, not in batch-1 decode).
+Prompt processing is where the cold path costs the most: ~5.75x with the filed dot-product fix,
 up to ~6.9x with i8mm.
 
 This likely also explains [ollama#8246](https://github.com/ollama/ollama/issues/8246): 5-10 seconds per

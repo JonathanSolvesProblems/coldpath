@@ -65,8 +65,9 @@ chips do not, so the PR intentionally ships dot-product only._
 
 The fix, the root cause, and the reproducible measurement are in
 [`examples/ollama-fix/`](examples/ollama-fix/). The benchmark is
-[`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml), re-runnable by anyone (including a
-judge) from the Actions tab on free Arm64 hardware. coldpath is the instrument that found this, and
+[`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml); its results are in every run's
+summary, and anyone who forks the repo can re-run it themselves on the free Arm64 runner (a fork is needed
+because `workflow_dispatch` requires write access). coldpath is the instrument that found this, and
 [the CI gate](#as-a-ci-gate) that stops it shipping again.
 
 ---
@@ -131,6 +132,22 @@ assert absence it cannot back up).
 
 For a multi-variant release that dlopens the best of several single-ISA libraries at runtime, add
 `--any` so the set is judged by its best member, not its armv8.0 fallback.
+
+### On an Arm64 machine (Graviton, Cobalt, Axion, a Pi, Apple Silicon)
+
+coldpath needs no Arm hardware, but on an Arm64 box you can point it straight at what you just built or
+installed, and confirm your own deployment uses the silicon:
+
+```bash
+pip install coldpath
+# example: check the ggml that pip just installed for you
+python -c "import llama_cpp, pathlib; print(pathlib.Path(llama_cpp.__file__).parent)"
+coldpath "$(python -c 'import llama_cpp,pathlib;print(pathlib.Path(llama_cpp.__file__).parent)')"
+# WARM/HOT = you are using the matrix unit; TEPID/COLD = you left it off, rebuild with -march (see the guide)
+```
+
+Then reproduce the full cost benchmark on Arm64 with `bash scripts/demo.sh` (scans two real releases) or by
+forking and running the [benchmark workflow](.github/workflows/benchmark.yml) on the free Neoverse N2 runner.
 
 ---
 
@@ -248,9 +265,12 @@ decode) that one build flag recovers on Arm cloud silicon.
 | `objdump` / `llvm-objdump` | no | no | yes | no (raw bytes, DIY) | no |
 | runtime profilers (`perf`) | yes | yes | no | no | n/a |
 
-Streamline and Performix profile a running workload on real Arm silicon. arm-readiness tools check whether
-code *builds* on Arm64. `objdump` shows raw bytes. None give a turnkey, hardware-free, CI-gateable answer
-to "does my Arm AI binary actually use the matrix hardware."
+These are complementary, not rivals. Arm's own **Streamline and Performix** profile a *running* workload on
+real Arm silicon to find hot functions and guide optimization; coldpath is the static pre-check that runs
+anywhere, including CI, and catches a mis-built binary *before* you spend an instance profiling it.
+arm-readiness tools check whether code *builds* on Arm64; coldpath checks whether it is *fast*. `objdump`
+shows raw bytes; coldpath turns them into a one-command verdict. The clean division of labor:
+**coldpath in the pull request, Performix on the instance.**
 
 ## Who this is for
 

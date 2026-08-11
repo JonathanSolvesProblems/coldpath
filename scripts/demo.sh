@@ -28,4 +28,5 @@ unzip -q lcpp.zip -d lcpp
 echo
 echo "==> Same OS. Same ggml. One has the matrix kernels, one ships COLD."
 echo "    Root cause + one-line fix: examples/ollama-fix/"
-echo "    What it costs (~6-7x on Neoverse N2): the 'What the cold path costs' GitHub Action."
+echo "    What it costs (5.75x prefill from the filed fix, up to 6.9x with i8mm, on Neoverse N2):"
+echo "    the 'What the cold path costs' GitHub Action."
