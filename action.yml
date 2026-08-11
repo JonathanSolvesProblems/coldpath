@@ -13,6 +13,13 @@ inputs:
     description: Fail if any scanned binary lacks this feature (sme, i8mm, bf16, dotprod).
     required: false
     default: i8mm
+  any:
+    description: >-
+      With require, pass if ANY scanned binary has the feature, not every one. Use for a release
+      whose matmul lives in one backend library among launcher shims, or that dlopens the best of
+      several single-ISA variants at runtime.
+    required: false
+    default: 'false'
   fail-on-cold:
     description: If false, report but never fail the job.
     required: false
@@ -56,5 +63,7 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
         if [ "${{ inputs.fail-on-cold }}" = "true" ]; then
-          coldpath "${{ inputs.path }}" --require "${{ inputs.require }}" --quiet
+          ANY=""
+          [ "${{ inputs.any }}" = "true" ] && ANY="--any"
+          coldpath "${{ inputs.path }}" --require "${{ inputs.require }}" $ANY --quiet
         fi

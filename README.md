@@ -130,8 +130,18 @@ assert absence it cannot back up).
     require: i8mm          # fail the PR if the shipped binary has no matrix instructions
 ```
 
-For a multi-variant release that dlopens the best of several single-ISA libraries at runtime, add
-`--any` so the set is judged by its best member, not its armv8.0 fallback.
+Point `path` at your own build output, where every binary should be hot. When you instead scan a
+whole third-party **release archive**, the matmul kernels usually live in one backend library (e.g.
+`ggml-cpu.dll`) while the `llama-*`/`ollama` executables next to it are thin launcher shims that
+carry no kernels, so a strict gate would fail on the shims. For that case judge the set by its best
+member with `--any` (CLI) or `any: true` (Action):
+
+```bash
+coldpath --require i8mm --any ./llama-arm64-release/   # passes if the backend lib is warm
+```
+
+The same flag covers a multi-variant build that dlopens the best of several single-ISA libraries at
+runtime, so the set is scored on the variant that actually loads, not its armv8.0 fallback.
 
 ### On an Arm64 machine (Graviton, Cobalt, Axion, a Pi, Apple Silicon)
 
@@ -289,7 +299,8 @@ drop into their own pipeline, the [scan scoreboard](RESULTS.md) of official Arm 
 own, in one command.
 
 **New here?** Start with the [field guide](docs/GUIDE.md): the 30-second version, why it happens, how to
-check any build, and how to fix it.
+check any build, and how to fix it. To reproduce every claim yourself in two minutes, follow
+[TESTING.md](TESTING.md).
 
 ## Licence
 
