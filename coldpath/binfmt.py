@@ -43,14 +43,22 @@ def _elf(path: pathlib.Path) -> Iterator[Section]:
 def _pe(path: pathlib.Path) -> Iterator[Section]:
     import pefile
 
-    pe = pefile.PE(str(path), fast_load=True)
-    if pe.FILE_HEADER.Machine != 0xAA64:  # IMAGE_FILE_MACHINE_ARM64
-        raise NotAArch64(hex(pe.FILE_HEADER.Machine))
-    base = pe.OPTIONAL_HEADER.ImageBase
-    for sec in pe.sections:
-        if sec.Characteristics & 0x20000000:  # IMAGE_SCN_MEM_EXECUTE
-            name = sec.Name.rstrip(b"\x00").decode(errors="replace")
-            yield name, base + sec.VirtualAddress, sec.get_data()
+    # Parse from an in-memory copy and close explicitly. pefile mmaps the file by default, which on
+    # Windows keeps it locked and makes a later TemporaryDirectory teardown fail (WinError 32) when the
+    # binary came out of an archive we unpacked. Reading bytes + close() avoids the lock entirely.
+    pe = pefile.PE(data=path.read_bytes(), fast_load=True)
+    try:
+        if pe.FILE_HEADER.Machine != 0xAA64:  # IMAGE_FILE_MACHINE_ARM64
+            raise NotAArch64(hex(pe.FILE_HEADER.Machine))
+        base = pe.OPTIONAL_HEADER.ImageBase
+        out = []
+        for sec in pe.sections:
+            if sec.Characteristics & 0x20000000:  # IMAGE_SCN_MEM_EXECUTE
+                name = sec.Name.rstrip(b"\x00").decode(errors="replace")
+                out.append((name, base + sec.VirtualAddress, sec.get_data()))
+        return out
+    finally:
+        pe.close()
 
 
 def _macho_slice(data: bytes, off: int) -> Iterator[Section]:

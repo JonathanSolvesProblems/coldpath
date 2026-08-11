@@ -25,6 +25,48 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: python -m pytest -q
 
+      # Regression for the P0: scanning a PE inside an archive used to crash on Windows because
+      # pefile kept the file mapped and the temp-dir teardown failed (WinError 32). Runs on every OS;
+      # only Windows actually exercised the lock, so this leg is the guard.
+      - name: Scan a PE-in-archive (must not crash)
+        shell: bash
+        run: |
+          curl -sL -o o.zip "https://github.com/ollama/ollama/releases/download/v0.31.2/ollama-windows-arm64.zip"
+          python -m coldpath o.zip
+
+  # Prove the CI-gate Action actually works: it must PASS a warm binary and FAIL a cold one.
+  action-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch one warm and one cold binary
+        run: |
+          LV=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | python3 -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
+          curl -sL -o l.tgz "https://github.com/ggml-org/llama.cpp/releases/download/$LV/llama-$LV-bin-ubuntu-arm64.tar.gz"
+          mkdir _w && tar xzf l.tgz -C _w && cp _w/*/libggml-cpu-armv8.6_1.so warm.so
+          curl -sL -o o.zip "https://github.com/ollama/ollama/releases/download/v0.31.2/ollama-windows-arm64.zip"
+          mkdir _c && unzip -q o.zip -d _c && cp _c/lib/ollama/ggml-cpu.dll cold.dll
+      - name: Action must PASS on a warm binary
+        uses: ./
+        with:
+          path: warm.so
+          require: i8mm
+      - name: Action must FAIL on a cold binary
+        id: coldgate
+        continue-on-error: true
+        uses: ./
+        with:
+          path: cold.dll
+          require: i8mm
+      - name: Assert the gate failed the cold binary
+        run: |
+          test "${{ steps.coldgate.outcome }}" = "failure" \
+            && echo "CI gate correctly failed the cold binary" \
+            || { echo "Action did NOT fail on a cold binary"; exit 1; }
+
   # The claim in the README must survive contact with the real binaries, on every push.
   verify-findings:
     runs-on: ubuntu-24.04

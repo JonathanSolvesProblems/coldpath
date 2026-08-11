@@ -35,6 +35,10 @@ def _expand(path: pathlib.Path, tmp: pathlib.Path) -> list[pathlib.Path]:
     if path.suffix.lower() in ARCHIVES or suffixes in {".tar.gz", ".tar.zst", ".tar.xz", ".tar.bz2"}:
         dest = tmp / path.name
         dest.mkdir(parents=True, exist_ok=True)
+        # coldpath's whole job is opening untrusted third-party archives, so extraction must be
+        # path-traversal safe. tarfile's 'data' filter (3.12+, backported to security releases) blocks
+        # '..' and absolute paths; ZipFile already sanitises member paths.
+        tar_kw = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         try:
             if zipfile.is_zipfile(path):
                 with zipfile.ZipFile(path) as z:
@@ -43,10 +47,10 @@ def _expand(path: pathlib.Path, tmp: pathlib.Path) -> list[pathlib.Path]:
                 import zstandard
                 with path.open("rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as reader:
                     with tarfile.open(fileobj=reader, mode="r|") as t:
-                        t.extractall(dest)
+                        t.extractall(dest, **tar_kw)
             else:
                 with tarfile.open(path) as t:
-                    t.extractall(dest)
+                    t.extractall(dest, **tar_kw)
         except Exception as e:  # noqa: BLE001 - a corrupt archive must not abort a 40-binary scan
             print(f"  ! could not unpack {path.name}: {e}", file=sys.stderr)
             return []
