@@ -1,0 +1,57 @@
+name: performix-probe
+
+# THROWAWAY feasibility probe (separate workflow, cannot affect main CI). Determines whether Arm
+# Performix (apx) can download, license-free, and profile a program on the free GitHub arm64 runner.
+# If it works, the profiling step gets folded into benchmark.yml; if not, this file is deleted.
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/performix-probe.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Environment
+        run: |
+          echo "arch: $(uname -m)"; lscpu | grep -i 'model name' | head -1
+          echo "perf_event_paranoid: $(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo n/a)"
+
+      - name: Download + install apx
+        continue-on-error: true
+        run: |
+          set -x
+          wget -q -P "$HOME" https://artifacts.tools.arm.com/arm-performix/app/latest/linux/arm64/ArmPerformix-linux-arm64.deb || { echo "DOWNLOAD FAILED"; exit 0; }
+          ls -la "$HOME"/ArmPerformix-linux-arm64.deb || true
+          sudo apt-get install -y "$HOME"/ArmPerformix-linux-arm64.deb 2>&1 | tail -5 || sudo dpkg -i "$HOME"/ArmPerformix-linux-arm64.deb 2>&1 | tail -5 || true
+          which apx || ls -la /opt/**/apx 2>/dev/null || find / -name apx -type f 2>/dev/null | head
+
+      - name: apx version + help (self-discover the profiling command)
+        continue-on-error: true
+        run: |
+          set -x
+          apx version || apx --version || true
+          apx --help 2>&1 | head -40 || true
+          for sub in record profile run analyze recipe; do echo "### apx $sub --help"; apx $sub --help 2>&1 | head -20 || true; done
+
+      - name: Try to profile a real workload (does it need root / perf perms / a license?)
+        continue-on-error: true
+        run: |
+          set -x
+          # a tiny CPU-bound program to profile
+          cat > loop.c <<'C'
+          #include <stdio.h>
+          int main(){ volatile double s=0; for(long i=0;i<2000000000L;i++) s+=i*1e-9; printf("%f\n",s); return 0; }
+          C
+          cc -O2 -o loop loop.c
+          echo "=== attempt: apx record ==="; apx record -- ./loop 2>&1 | tail -30 || true
+          echo "=== attempt: apx run ==="; apx run ./loop 2>&1 | tail -30 || true
+          echo "=== any output files? ==="; ls -la *.apx *.json apx* 2>/dev/null || true
+
+      - name: Verdict
+        if: always()
+        run: echo "Probe complete. Read the logs above: did apx install, run license-free, and profile without needing perf privileges it doesn't have?"
