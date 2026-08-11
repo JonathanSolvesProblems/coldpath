@@ -19,7 +19,7 @@ gated it in CI so a cold build can't reach your Arm fleet.**
 
 > **$0.45 → $0.08 per 1M prompt tokens, from one build flag, measured live on Azure Cobalt 100 (Neoverse N2).**
 
-**▶ Watch the demo (90s): https://www.youtube.com/watch?v=3L2rTzTAvfk**
+**▶ [Watch the demo (90s)](https://www.youtube.com/watch?v=3L2rTzTAvfk)  ·  📝 [Read the write-up](https://jonathansolvesproblems.com/blog/coldpath-ollama-arm-matrix-unit-off-ci-gate/)**
 
 `coldpath` disassembles any AArch64 binary and proves whether it *contains* the chip's matrix and
 dot-product instructions (SME/SME2, i8mm, bf16 matmul, dotprod). Absence is dispositive: zero `smmla`
@@ -309,7 +309,8 @@ own, in one command.
 
 **New here?** Start with the [field guide](docs/GUIDE.md): the 30-second version, why it happens, how to
 check any build, and how to fix it. To reproduce every claim yourself in two minutes, follow
-[TESTING.md](TESTING.md).
+[TESTING.md](TESTING.md). For the full story of the finding and the fix, read the
+[write-up](https://jonathansolvesproblems.com/blog/coldpath-ollama-arm-matrix-unit-off-ci-gate/).
 
 ## Licence
 
