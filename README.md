@@ -4,6 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/coldpath)](https://pypi.org/project/coldpath/)
 [![tests](https://github.com/JonathanSolvesProblems/coldpath/actions/workflows/test.yml/badge.svg)](https://github.com/JonathanSolvesProblems/coldpath/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Demo](https://img.shields.io/badge/demo-YouTube-red?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=3L2rTzTAvfk)
 
 *A linter and CI gate for whether your Arm AI binary actually uses the chip's matrix hardware.*
 
@@ -17,6 +18,8 @@ it in any shipped binary with no Arm hardware, filed the one-line fix to the top
 gated it in CI so a cold build can't reach your Arm fleet.**
 
 > **$0.45 → $0.08 per 1M prompt tokens, from one build flag, measured live on Azure Cobalt 100 (Neoverse N2).**
+
+**▶ Watch the demo (90s): https://www.youtube.com/watch?v=3L2rTzTAvfk**
 
 `coldpath` disassembles any AArch64 binary and proves whether it *contains* the chip's matrix and
 dot-product instructions (SME/SME2, i8mm, bf16 matmul, dotprod). Absence is dispositive: zero `smmla`
