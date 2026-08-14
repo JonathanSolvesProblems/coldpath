@@ -190,8 +190,8 @@ Three findings fall out:
 **1. Ollama's Windows-on-Arm build has no matrix or dot-product instructions.** Cause and one-line fix
 in [`examples/ollama-fix/`](examples/ollama-fix/); ~5.75x prefill from the dot-product fix I filed, up to
 ~6.9x with i8mm, measured on Cobalt 100. Its Linux build is fine (the row above), so this is
-Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed COLD on **all 8 stable
-releases** (v0.32.2 was withdrawn) from v0.31.2 through the current v0.32.7, and
+Windows-specific and build-flag-specific, not Ollama being incapable. Confirmed COLD on **every
+Windows-on-Arm release checked** from v0.31.2 through the current v0.32.11, and
 [`test.yml`](.github/workflows/test.yml) re-downloads the *latest* release and re-checks it on every push,
 so this claim can't silently rot.
 
